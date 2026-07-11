@@ -15,15 +15,24 @@ export default function ReadyScreen() {
   const launched = useRef(false);
 
   useEffect(() => {
-    if (!deck || round.status !== 'ready') {
+    if (!deck || round.status === 'idle') {
       router.replace('/');
+      return;
+    }
+
+    if (round.status === 'playing' || round.status === 'feedback') {
+      router.replace('/game' as Href);
+      return;
+    }
+
+    if (round.status === 'finished') {
+      router.replace('/results' as Href);
       return;
     }
 
     if (count === 0 && !launched.current) {
       launched.current = true;
       startRound();
-      router.replace('/game' as Href);
       return;
     }
 
