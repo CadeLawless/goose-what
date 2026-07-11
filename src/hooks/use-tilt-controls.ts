@@ -41,6 +41,14 @@ export function useTiltControls({ enabled, acceptingInput, onAction }: UseTiltCo
       setStatus('checking');
       detector.current = createTiltDetectorState();
 
+      // Browser support varies widely and some Expo web implementations report
+      // availability without exposing the listener API. The web MVP therefore
+      // uses the reliable button controls and reserves tilt input for native apps.
+      if (Platform.OS === 'web') {
+        setStatus('unavailable');
+        return;
+      }
+
       const available = await DeviceMotion.isAvailableAsync().catch(() => false);
       if (!active) return;
       if (!available) {
@@ -49,7 +57,7 @@ export function useTiltControls({ enabled, acceptingInput, onAction }: UseTiltCo
       }
 
       const currentPermission = await DeviceMotion.getPermissionsAsync().catch(() => null);
-      let granted = currentPermission?.granted ?? Platform.OS !== 'web';
+      let granted = currentPermission?.granted ?? true;
       if (!granted && currentPermission?.canAskAgain) {
         const requested = await DeviceMotion.requestPermissionsAsync().catch(() => null);
         granted = requested?.granted ?? false;
@@ -62,14 +70,18 @@ export function useTiltControls({ enabled, acceptingInput, onAction }: UseTiltCo
 
       DeviceMotion.setUpdateInterval(50);
       setStatus('calibrating');
-      subscription = DeviceMotion.addListener((measurement) => {
-        const angle = normalizeLandscapeTilt(measurement.rotation.gamma, measurement.orientation);
-        const result = updateTiltDetector(detector.current, angle);
-        detector.current = result.state;
+      try {
+        subscription = DeviceMotion.addListener((measurement) => {
+          const angle = normalizeLandscapeTilt(measurement.rotation.gamma, measurement.orientation);
+          const result = updateTiltDetector(detector.current, angle);
+          detector.current = result.state;
 
-        if (result.calibrated) setStatus((current) => (current === 'ready' ? current : 'ready'));
-        if (result.action && acceptingInputRef.current) onActionRef.current(result.action);
-      });
+          if (result.calibrated) setStatus((current) => (current === 'ready' ? current : 'ready'));
+          if (result.action && acceptingInputRef.current) onActionRef.current(result.action);
+        });
+      } catch {
+        setStatus('unavailable');
+      }
     };
 
     connect();
