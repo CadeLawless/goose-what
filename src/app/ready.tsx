@@ -1,3 +1,4 @@
+import { formatRoundClock } from '@/game/round-duration';
 import { type Href, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -52,8 +53,8 @@ export default function ReadyScreen() {
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: deck.color }]}>
       <View style={styles.topRow}>
-        <Text style={styles.deckName}>{deck.icon} {deck.title}</Text>
-        <Text style={styles.duration}>{round.durationSeconds}s</Text>
+        <Text style={styles.duration}>{formatRoundClock(round.durationSeconds)}</Text>
+        <Text style={typography.deckName}>{deck.icon} {deck.title}</Text>
       </View>
 
       <View style={styles.center}>
@@ -74,7 +75,6 @@ export default function ReadyScreen() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, padding: spacing.lg },
   topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  deckName: { color: colors.ink, fontSize: 15, fontWeight: '900' },
   duration: {
     color: colors.ink,
     fontSize: 14,

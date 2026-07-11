@@ -22,10 +22,34 @@ export const spacing = {
   xxxl: 64,
 } as const;
 
-export const radius = { md: 12, lg: 20, xl: 28, pill: 999 } as const;
+export const radius = {
+  md: 12,
+  lg: 20,
+  xl: 28,
+  pill: 999,
+} as const;
 
-export const typography: Record<'hero' | 'title' | 'body', TextStyle> = {
-  hero: { fontSize: 42, lineHeight: 45, fontWeight: '900', letterSpacing: -1.4 },
-  title: { fontSize: 28, lineHeight: 34, fontWeight: '900', letterSpacing: -0.6 },
-  body: { fontSize: 17, lineHeight: 25, fontWeight: '500' },
-};
+export const typography = {
+  hero: {
+    fontSize: 42,
+    lineHeight: 45,
+    fontWeight: '900',
+    letterSpacing: -1.4,
+  },
+  title: {
+    fontSize: 28,
+    lineHeight: 34,
+    fontWeight: '900',
+    letterSpacing: -0.6,
+  },
+  body: {
+    fontSize: 17,
+    lineHeight: 25,
+    fontWeight: '500',
+  },
+  deckName: {
+    color: colors.ink,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+} satisfies Record<string, TextStyle>;

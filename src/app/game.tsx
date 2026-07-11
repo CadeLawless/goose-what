@@ -1,16 +1,16 @@
+import * as Haptics from 'expo-haptics';
+import { useKeepAwake } from 'expo-keep-awake';
 import { type Href, useRouter } from 'expo-router';
 import { useCallback, useEffect } from 'react';
 import { AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as Haptics from 'expo-haptics';
-import { useKeepAwake } from 'expo-keep-awake';
 
 import { getDeckById } from '@/data/decks';
 import { useRound } from '@/game/round-context';
 import { formatRoundClock } from '@/game/round-duration';
 import { useRoundTimer } from '@/hooks/use-round-timer';
 import { useTiltControls } from '@/hooks/use-tilt-controls';
-import { colors, radius, spacing } from '@/theme';
+import { colors, radius, spacing, typography } from '@/theme';
 
 export default function GameScreen() {
   useKeepAwake();
@@ -79,15 +79,16 @@ export default function GameScreen() {
           <Text style={styles.timer}>{formatRoundClock(remainingSeconds)}</Text>
           <Text style={styles.timerLabel}>TIME</Text>
         </View>
-        <Text style={styles.progress}>
+        <Text style={[typography.deckName]}>{deck.icon} {deck.title}</Text>
+        {/* <Text style={styles.progress}>
           {round.currentCardIndex + 1} / {round.cardOrder.length}
-        </Text>
+        </Text> */}
       </View>
 
-      <View style={styles.sensorRow}>
+      {/* <View style={styles.sensorRow}>
         <View style={[styles.sensorDot, tiltStatus === 'ready' && styles.sensorDotReady]} />
         <Text style={styles.sensorText}>{getTiltStatusLabel(tiltStatus)}</Text>
-      </View>
+      </View> */}
 
       <View style={styles.cardArea}>
         <Text style={styles.cardLabel}>YOUR CARD</Text>
