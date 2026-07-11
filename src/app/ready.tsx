@@ -59,7 +59,9 @@ export default function ReadyScreen() {
       <View style={styles.center}>
         <Text style={styles.kicker}>HOLD THE PHONE TO YOUR FOREHEAD</Text>
         <Text style={styles.count}>{count}</Text>
-        <Text style={styles.instructions}>Use the buttons for now.{`\n`}Motion controls arrive next.</Text>
+        <Text style={styles.instructions}>
+          Hold steady after the countdown.{`\n`}Tilt down for correct · tilt up to pass.
+        </Text>
       </View>
 
       <Pressable accessibilityRole="button" onPress={handleCancel} style={styles.cancelButton}>

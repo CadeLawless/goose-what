@@ -1,0 +1,83 @@
+import { useEffect, useRef, useState } from 'react';
+import { Platform } from 'react-native';
+import { DeviceMotion } from 'expo-sensors';
+
+import type { TiltAction } from '@/game/tilt-detector';
+import {
+  createTiltDetectorState,
+  normalizeLandscapeTilt,
+  updateTiltDetector,
+} from '@/game/tilt-detector';
+
+export type TiltControlStatus = 'checking' | 'calibrating' | 'ready' | 'unavailable' | 'denied';
+
+type UseTiltControlsOptions = {
+  enabled: boolean;
+  acceptingInput: boolean;
+  onAction: (action: TiltAction) => void;
+};
+
+export function useTiltControls({ enabled, acceptingInput, onAction }: UseTiltControlsOptions) {
+  const [status, setStatus] = useState<TiltControlStatus>('checking');
+  const detector = useRef(createTiltDetectorState());
+  const acceptingInputRef = useRef(acceptingInput);
+  const onActionRef = useRef(onAction);
+
+  useEffect(() => {
+    acceptingInputRef.current = acceptingInput;
+  }, [acceptingInput]);
+
+  useEffect(() => {
+    onActionRef.current = onAction;
+  }, [onAction]);
+
+  useEffect(() => {
+    if (!enabled) return;
+
+    let active = true;
+    let subscription: ReturnType<typeof DeviceMotion.addListener> | null = null;
+
+    const connect = async () => {
+      setStatus('checking');
+      detector.current = createTiltDetectorState();
+
+      const available = await DeviceMotion.isAvailableAsync().catch(() => false);
+      if (!active) return;
+      if (!available) {
+        setStatus('unavailable');
+        return;
+      }
+
+      const currentPermission = await DeviceMotion.getPermissionsAsync().catch(() => null);
+      let granted = currentPermission?.granted ?? Platform.OS !== 'web';
+      if (!granted && currentPermission?.canAskAgain) {
+        const requested = await DeviceMotion.requestPermissionsAsync().catch(() => null);
+        granted = requested?.granted ?? false;
+      }
+      if (!active) return;
+      if (!granted) {
+        setStatus('denied');
+        return;
+      }
+
+      DeviceMotion.setUpdateInterval(50);
+      setStatus('calibrating');
+      subscription = DeviceMotion.addListener((measurement) => {
+        const angle = normalizeLandscapeTilt(measurement.rotation.gamma, measurement.orientation);
+        const result = updateTiltDetector(detector.current, angle);
+        detector.current = result.state;
+
+        if (result.calibrated) setStatus((current) => (current === 'ready' ? current : 'ready'));
+        if (result.action && acceptingInputRef.current) onActionRef.current(result.action);
+      });
+    };
+
+    connect();
+    return () => {
+      active = false;
+      subscription?.remove();
+    };
+  }, [enabled]);
+
+  return status;
+}

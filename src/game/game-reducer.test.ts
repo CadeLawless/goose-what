@@ -4,6 +4,11 @@ import { describe, it } from 'node:test';
 import { initialRoundState, roundReducer } from './game-reducer';
 import { clampRoundDuration, formatRoundClock } from './round-duration';
 import { shuffle } from './shuffle';
+import {
+  createTiltDetectorState,
+  normalizeLandscapeTilt,
+  updateTiltDetector,
+} from './tilt-detector';
 
 describe('roundReducer', () => {
   it('configures and starts a timed round', () => {
@@ -84,5 +89,44 @@ describe('round duration', () => {
     assert.equal(formatRoundClock(90), '1:30');
     assert.equal(formatRoundClock(9), '0:09');
     assert.equal(formatRoundClock(0), '0:00');
+  });
+});
+
+describe('tilt detector', () => {
+  const config = {
+    calibrationSamples: 2,
+    smoothingFactor: 1,
+    triggerAngle: 0.6,
+    neutralAngle: 0.2,
+  };
+
+  it('calibrates before accepting a tilt', () => {
+    const first = updateTiltDetector(createTiltDetectorState(), 0.1, config);
+    const second = updateTiltDetector(first.state, 0.1, config);
+
+    assert.equal(first.calibrated, false);
+    assert.equal(second.calibrated, true);
+    assert.equal(second.state.baseline, 0.1);
+  });
+
+  it('emits one action and requires a return to neutral', () => {
+    let result = updateTiltDetector(createTiltDetectorState(), 0, config);
+    result = updateTiltDetector(result.state, 0, config);
+    result = updateTiltDetector(result.state, 0.7, config);
+    assert.equal(result.action, 'correct');
+
+    result = updateTiltDetector(result.state, 0.8, config);
+    assert.equal(result.action, null);
+    assert.equal(result.state.armed, false);
+
+    result = updateTiltDetector(result.state, 0.1, config);
+    assert.equal(result.state.armed, true);
+    result = updateTiltDetector(result.state, -0.7, config);
+    assert.equal(result.action, 'passed');
+  });
+
+  it('normalizes left-landscape readings', () => {
+    assert.equal(normalizeLandscapeTilt(0.5, 90), 0.5);
+    assert.equal(normalizeLandscapeTilt(0.5, -90), -0.5);
   });
 });

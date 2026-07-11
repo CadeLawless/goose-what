@@ -17,11 +17,23 @@ export default function RootLayout() {
           headerTitleStyle: { fontWeight: '800' },
         }}
       >
-        <Stack.Screen name="index" options={{ headerShown: false }} />
-        <Stack.Screen name="deck/[deckId]" options={{ title: 'Choose your round' }} />
-        <Stack.Screen name="ready" options={{ headerShown: false, gestureEnabled: false }} />
-        <Stack.Screen name="game" options={{ headerShown: false, gestureEnabled: false }} />
-        <Stack.Screen name="results" options={{ headerShown: false, gestureEnabled: false }} />
+        <Stack.Screen name="index" options={{ headerShown: false, orientation: 'portrait' }} />
+        <Stack.Screen
+          name="deck/[deckId]"
+          options={{ title: 'Choose your round', orientation: 'portrait' }}
+        />
+        <Stack.Screen
+          name="ready"
+          options={{ headerShown: false, gestureEnabled: false, orientation: 'landscape' }}
+        />
+        <Stack.Screen
+          name="game"
+          options={{ headerShown: false, gestureEnabled: false, orientation: 'landscape' }}
+        />
+        <Stack.Screen
+          name="results"
+          options={{ headerShown: false, gestureEnabled: false, orientation: 'portrait' }}
+        />
       </Stack>
     </RoundProvider>
   );

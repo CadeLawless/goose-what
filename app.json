@@ -10,7 +10,8 @@
     "ios": {
       "icon": "./assets/expo.icon",
       "bundleIdentifier": "com.cadelawless.goosewhat",
-      "supportsTablet": true
+      "supportsTablet": true,
+      "requireFullScreen": true
     },
     "android": {
       "package": "com.cadelawless.goosewhat",
@@ -28,6 +29,18 @@
     },
     "plugins": [
       "expo-dev-client",
+      [
+        "expo-sensors",
+        {
+          "motionPermission": "Allow Goose What to detect correct and passed cards when you tilt your device."
+        }
+      ],
+      [
+        "expo-screen-orientation",
+        {
+          "initialOrientation": "PORTRAIT"
+        }
+      ],
       "expo-router",
       [
         "expo-splash-screen",

@@ -2,14 +2,18 @@ import { type Href, useRouter } from 'expo-router';
 import { useCallback, useEffect } from 'react';
 import { AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
+import { useKeepAwake } from 'expo-keep-awake';
 
 import { getDeckById } from '@/data/decks';
 import { useRound } from '@/game/round-context';
 import { formatRoundClock } from '@/game/round-duration';
 import { useRoundTimer } from '@/hooks/use-round-timer';
+import { useTiltControls } from '@/hooks/use-tilt-controls';
 import { colors, radius, spacing } from '@/theme';
 
 export default function GameScreen() {
+  useKeepAwake();
   const router = useRouter();
   const { round, answerCard, advanceCard, finishRound } = useRound();
   const deck = getDeckById(round.deckId ?? undefined);
@@ -20,6 +24,22 @@ export default function GameScreen() {
     endsAt: round.endsAt,
     active: round.status === 'playing' || round.status === 'feedback',
     onExpire: handleExpire,
+  });
+  const handleAnswer = useCallback(
+    (outcome: 'correct' | 'passed') => {
+      if (outcome === 'correct') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+      } else {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+      }
+      answerCard(outcome);
+    },
+    [answerCard],
+  );
+  const tiltStatus = useTiltControls({
+    enabled: round.status === 'playing' || round.status === 'feedback',
+    acceptingInput: round.status === 'playing',
+    onAction: handleAnswer,
   });
 
   useEffect(() => {
@@ -64,6 +84,11 @@ export default function GameScreen() {
         </Text>
       </View>
 
+      <View style={styles.sensorRow}>
+        <View style={[styles.sensorDot, tiltStatus === 'ready' && styles.sensorDotReady]} />
+        <Text style={styles.sensorText}>{getTiltStatusLabel(tiltStatus)}</Text>
+      </View>
+
       <View style={styles.cardArea}>
         <Text style={styles.cardLabel}>YOUR CARD</Text>
         <Text adjustsFontSizeToFit numberOfLines={3} minimumFontScale={0.55} style={styles.cardText}>
@@ -75,7 +100,7 @@ export default function GameScreen() {
         <Pressable
           accessibilityRole="button"
           disabled={locked}
-          onPress={() => answerCard('passed')}
+          onPress={() => handleAnswer('passed')}
           style={({ pressed }) => [styles.control, styles.passButton, pressed && styles.controlPressed]}
         >
           <Text style={styles.controlIcon}>↑</Text>
@@ -84,7 +109,7 @@ export default function GameScreen() {
         <Pressable
           accessibilityRole="button"
           disabled={locked}
-          onPress={() => answerCard('correct')}
+          onPress={() => handleAnswer('correct')}
           style={({ pressed }) => [styles.control, styles.correctButton, pressed && styles.controlPressed]}
         >
           <Text style={styles.controlIcon}>↓</Text>
@@ -104,6 +129,21 @@ export default function GameScreen() {
   );
 }
 
+function getTiltStatusLabel(status: ReturnType<typeof useTiltControls>) {
+  switch (status) {
+    case 'checking':
+      return 'CHECKING MOTION';
+    case 'calibrating':
+      return 'HOLD STEADY · CALIBRATING';
+    case 'ready':
+      return 'TILT CONTROLS READY';
+    case 'denied':
+      return 'MOTION DENIED · USE BUTTONS';
+    case 'unavailable':
+      return 'BUTTON CONTROLS';
+  }
+}
+
 const styles = StyleSheet.create({
   safeArea: { flex: 1, padding: spacing.lg },
   topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
@@ -119,6 +159,19 @@ const styles = StyleSheet.create({
   timer: { color: colors.ink, fontSize: 25, fontWeight: '900' },
   timerLabel: { color: colors.muted, fontSize: 9, fontWeight: '900', letterSpacing: 1.2 },
   progress: { color: colors.ink, fontSize: 13, fontWeight: '900', opacity: 0.65 },
+  sensorRow: {
+    position: 'absolute',
+    top: spacing.lg + 15,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+  },
+  sensorDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.muted },
+  sensorDotReady: { backgroundColor: colors.correct },
+  sensorText: { color: colors.ink, fontSize: 9, fontWeight: '900', letterSpacing: 1.2, opacity: 0.62 },
   cardArea: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.md },
   cardLabel: { color: colors.ink, fontSize: 11, fontWeight: '900', letterSpacing: 2, opacity: 0.55 },
   cardText: {

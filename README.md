@@ -2,7 +2,7 @@
 
 Goose What is a React Native party game built with Expo. Players choose a themed deck, hold the phone to their forehead, and guess cards from their friends' clues.
 
-This repository currently contains the Milestone 2 button-controlled game loop:
+This repository currently contains the Milestone 3 motion-control implementation:
 
 - Expo SDK 57 with React Native and TypeScript
 - Expo Router navigation
@@ -17,8 +17,15 @@ This repository currently contains the Milestone 2 button-controlled game loop:
 - Accurate timestamp-based round timing
 - Results, scoring, and replay
 - Automated tests for core game behavior
+- Landscape ready and gameplay screens
+- Neutral-position motion calibration
+- Smoothed tilt detection with debounce and return-to-neutral rearming
+- Tilt down for correct and tilt up to pass
+- Haptic feedback for card outcomes
+- Screen-awake behavior during gameplay
+- Button controls when motion is unavailable or denied
 
-Physical tilt controls, landscape locking, and haptic feedback follow in Milestone 3.
+Motion thresholds are intentionally configurable in `src/game/tilt-detector.ts` and must be tuned on physical iOS and Android devices before Milestone 3 is considered fully validated.
 
 ## Requirements
 
