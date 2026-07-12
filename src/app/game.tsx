@@ -3,7 +3,7 @@ import { useKeepAwake } from 'expo-keep-awake';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { type Href, useRouter } from 'expo-router';
 import { useCallback, useEffect } from 'react';
-import { AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { getDeckById } from '@/data/decks';
@@ -43,6 +43,21 @@ export default function GameScreen() {
     acceptingInput: round.status === 'playing',
     onAction: handleAnswer,
   });
+  const handleFinishEarly = useCallback(() => {
+    if (Platform.OS === 'web') {
+      finishRound();
+      return;
+    }
+
+    Alert.alert(
+      'Finish round early?',
+      'Your answers so far will still appear in the results.',
+      [
+        { text: 'Keep Playing', style: 'cancel' },
+        { text: 'Finish Round', style: 'destructive', onPress: finishRound },
+      ],
+    );
+  }, [finishRound]);
 
   useEffect(() => {
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => undefined);
@@ -88,13 +103,22 @@ export default function GameScreen() {
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: deck.color }]}>
       <View style={styles.topRow}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Finish round early"
+          disabled={round.status === 'ready'}
+          onPress={handleFinishEarly}
+          style={({ pressed }) => [styles.finishButton, pressed && styles.finishButtonPressed]}
+        >
+          <Text style={styles.finishButtonText}>END ROUND</Text>
+        </Pressable>
         <View style={styles.timerPill}>
           <Text style={styles.timer}>
             {formatRoundClock(round.status === 'ready' ? round.durationSeconds : remainingSeconds)}
           </Text>
           <Text style={styles.timerLabel}>TIME</Text>
         </View>
-        <Text style={[typography.deckName]}>{deck.icon} {deck.title}</Text>
+        <Text style={[typography.deckName, styles.deckName]}>{deck.icon} {deck.title}</Text>
         {/* <Text style={styles.progress}>
           {round.currentCardIndex + 1} / {round.cardOrder.length}
         </Text> */}
@@ -172,7 +196,19 @@ function getTiltStatusLabel(status: ReturnType<typeof useTiltControls>) {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, padding: spacing.lg },
-  topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  topRow: { height: 52, alignItems: 'center', justifyContent: 'center' },
+  finishButton: {
+    position: 'absolute',
+    left: 0,
+    minHeight: 40,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(255,255,255,0.72)',
+  },
+  finishButtonPressed: { opacity: 0.7, transform: [{ scale: 0.98 }] },
+  finishButtonText: { color: colors.ink, fontSize: 10, fontWeight: '900', letterSpacing: 1.1 },
+  deckName: { position: 'absolute', right: 0 },
   timerPill: {
     flexDirection: 'row',
     alignItems: 'baseline',
