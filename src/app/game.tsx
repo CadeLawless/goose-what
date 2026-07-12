@@ -3,7 +3,7 @@ import { useKeepAwake } from 'expo-keep-awake';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { type Href, useRouter } from 'expo-router';
 import { useCallback, useEffect } from 'react';
-import { AppState, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { getDeckById } from '@/data/decks';
@@ -112,26 +112,28 @@ export default function GameScreen() {
         </Text>
       </View>
 
-      <View style={styles.controls}>
-        <Pressable
-          accessibilityRole="button"
-          disabled={locked}
-          onPress={() => handleAnswer('passed')}
-          style={({ pressed }) => [styles.control, styles.passButton, pressed && styles.controlPressed]}
-        >
-          <Text style={styles.controlIcon}>↑</Text>
-          <Text style={styles.controlText}>PASS</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          disabled={locked}
-          onPress={() => handleAnswer('correct')}
-          style={({ pressed }) => [styles.control, styles.correctButton, pressed && styles.controlPressed]}
-        >
-          <Text style={styles.controlIcon}>↓</Text>
-          <Text style={styles.controlText}>CORRECT</Text>
-        </Pressable>
-      </View>
+      {Platform.OS === 'web' && (
+        <View style={styles.controls}>
+          <Pressable
+            accessibilityRole="button"
+            disabled={locked}
+            onPress={() => handleAnswer('passed')}
+            style={({ pressed }) => [styles.control, styles.passButton, pressed && styles.controlPressed]}
+          >
+            <Text style={styles.controlIcon}>↑</Text>
+            <Text style={styles.controlText}>PASS</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            disabled={locked}
+            onPress={() => handleAnswer('correct')}
+            style={({ pressed }) => [styles.control, styles.correctButton, pressed && styles.controlPressed]}
+          >
+            <Text style={styles.controlIcon}>↓</Text>
+            <Text style={styles.controlText}>CORRECT</Text>
+          </Pressable>
+        </View>
+      )}
 
       {round.status === 'feedback' && (
         <View style={[styles.feedback, { backgroundColor: feedbackColor }]}>
