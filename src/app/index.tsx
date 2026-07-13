@@ -9,6 +9,7 @@ export default function DeckLibraryScreen() {
   const { width } = useWindowDimensions();
   const gridWidth = Math.min(width, 720);
   const deckWidth = Math.floor((gridWidth - spacing.lg * 2 - spacing.sm * 2) / 3);
+  const deckHeight = Math.round(deckWidth / 0.72);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -31,7 +32,7 @@ export default function DeckLibraryScreen() {
 
         <View style={styles.deckGrid}>
           {decks.map((deck) => (
-            <View key={deck.id} style={{ width: deckWidth }}>
+            <View key={deck.id} style={{ width: deckWidth, height: deckHeight }}>
               <DeckCard deck={deck} />
             </View>
           ))}

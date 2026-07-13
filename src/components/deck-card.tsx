@@ -32,7 +32,7 @@ export function DeckCard({ deck }: DeckCardProps) {
 const styles = StyleSheet.create({
   card: {
     width: '100%',
-    aspectRatio: 0.72,
+    height: '100%',
     borderRadius: radius.lg,
     overflow: 'hidden',
     borderWidth: 2,
