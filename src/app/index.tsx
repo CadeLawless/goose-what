@@ -1,4 +1,4 @@
-import { FlatList, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DeckCard } from '@/components/deck-card';
@@ -6,46 +6,45 @@ import { decks } from '@/data/decks';
 import { colors, radius, spacing, typography } from '@/theme';
 
 export default function DeckLibraryScreen() {
+  const { width } = useWindowDimensions();
+  const gridWidth = Math.min(width, 720);
+  const deckWidth = Math.floor((gridWidth - spacing.lg * 2 - spacing.sm * 2) / 3);
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <FlatList
-        key="deck-grid-3-columns"
-        data={decks}
-        numColumns={3}
-        keyExtractor={(deck) => deck.id}
-        contentContainerStyle={styles.content}
-        columnWrapperStyle={styles.deckRow}
-        ListHeaderComponent={
-          <View style={styles.header}>
-            <View style={styles.brandRow}>
-              <View style={styles.logoBadge}>
-                <Text style={styles.logo}>🪿</Text>
-              </View>
-              <Text style={styles.eyebrow}>GOOSE WHAT</Text>
-            </View>
-            <Text style={styles.title}>Pick a deck.{`\n`}Start guessing.</Text>
-            <Text style={styles.subtitle}>
-              Grab some friends, choose a category, and hold the phone to your forehead.
-            </Text>
-          </View>
-        }
-        renderItem={({ item }) => (
-          <View style={styles.deckCell}>
-            <DeckCard deck={item} />
-          </View>
-        )}
-        ItemSeparatorComponent={() => <View style={styles.separator} />}
-        ListFooterComponent={
-          <View style={styles.tip}>
-            <Text style={styles.tipIcon}>💡</Text>
-            <View style={styles.tipCopy}>
-              <Text style={styles.tipTitle}>How it works</Text>
-              <Text style={styles.tipText}>Tilt down for correct. Tilt up to pass.</Text>
-            </View>
-          </View>
-        }
+      <ScrollView
+        contentContainerStyle={[styles.content, { width: gridWidth }]}
         showsVerticalScrollIndicator={false}
-      />
+      >
+        <View style={styles.header}>
+          <View style={styles.brandRow}>
+            <View style={styles.logoBadge}>
+              <Text style={styles.logo}>🪿</Text>
+            </View>
+            <Text style={styles.eyebrow}>GOOSE WHAT</Text>
+          </View>
+          <Text style={styles.title}>Pick a deck.{`\n`}Start guessing.</Text>
+          <Text style={styles.subtitle}>
+            Grab some friends, choose a category, and hold the phone to your forehead.
+          </Text>
+        </View>
+
+        <View style={styles.deckGrid}>
+          {decks.map((deck) => (
+            <View key={deck.id} style={{ width: deckWidth }}>
+              <DeckCard deck={deck} />
+            </View>
+          ))}
+        </View>
+
+        <View style={styles.tip}>
+          <Text style={styles.tipIcon}>💡</Text>
+          <View style={styles.tipCopy}>
+            <Text style={styles.tipTitle}>How it works</Text>
+            <Text style={styles.tipText}>Tilt down for correct. Tilt up to pass.</Text>
+          </View>
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -53,8 +52,6 @@ export default function DeckLibraryScreen() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.background },
   content: {
-    width: '100%',
-    maxWidth: 720,
     alignSelf: 'center',
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
@@ -77,12 +74,7 @@ const styles = StyleSheet.create({
     transform: [{ rotate: '-4deg' }],
   },
   logo: { fontSize: 25 },
-  eyebrow: {
-    color: colors.ink,
-    fontSize: 15,
-    fontWeight: '900',
-    letterSpacing: 2.2,
-  },
+  eyebrow: { color: colors.ink, fontSize: 15, fontWeight: '900', letterSpacing: 2.2 },
   title: { ...typography.hero, color: colors.ink },
   subtitle: {
     ...typography.body,
@@ -90,9 +82,11 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     maxWidth: 440,
   },
-  deckRow: { gap: spacing.sm },
-  deckCell: { flex: 1, maxWidth: '32%' },
-  separator: { height: spacing.sm },
+  deckGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
   tip: {
     flexDirection: 'row',
     alignItems: 'center',
