@@ -1,5 +1,4 @@
 import { type Href, useFocusEffect, useRouter } from 'expo-router';
-import * as ScreenOrientation from 'expo-screen-orientation';
 import { useCallback } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -7,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { getDeckById } from '@/data/decks';
 import { useRound } from '@/game/round-context';
 import { colors, radius, spacing, typography } from '@/theme';
+import { lockPortraitOrientation } from '@/utils/orientation';
 
 export default function ResultsScreen() {
   const router = useRouter();
@@ -19,12 +19,7 @@ export default function ResultsScreen() {
     useCallback(() => {
       let active = true;
       const lockPortrait = async () => {
-        await ScreenOrientation.unlockAsync().catch(() => undefined);
-        if (active) {
-          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(
-            () => undefined,
-          );
-        }
+        if (active) await lockPortraitOrientation();
       };
 
       lockPortrait();

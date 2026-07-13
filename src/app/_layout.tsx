@@ -1,14 +1,16 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { colors } from '@/theme';
 import { RoundProvider } from '@/game/round-context';
 
 export default function RootLayout() {
   return (
-    <RoundProvider>
-      <StatusBar style="dark" />
-      <Stack
+    <SafeAreaProvider>
+      <RoundProvider>
+        <StatusBar style="dark" />
+        <Stack
         screenOptions={{
           contentStyle: { backgroundColor: colors.background },
           headerShadowVisible: false,
@@ -34,7 +36,6 @@ export default function RootLayout() {
           options={{
             headerShown: false,
             gestureEnabled: false,
-            orientation: 'landscape',
             animation: 'none',
           }}
         />
@@ -43,7 +44,6 @@ export default function RootLayout() {
           options={{
             headerShown: false,
             gestureEnabled: false,
-            orientation: 'landscape',
             animation: 'none',
           }}
         />
@@ -51,7 +51,8 @@ export default function RootLayout() {
           name="results"
           options={{ headerShown: false, gestureEnabled: false, orientation: 'portrait' }}
         />
-      </Stack>
-    </RoundProvider>
+        </Stack>
+      </RoundProvider>
+    </SafeAreaProvider>
   );
 }

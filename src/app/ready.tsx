@@ -1,4 +1,3 @@
-import * as ScreenOrientation from 'expo-screen-orientation';
 import { type Href, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
@@ -9,6 +8,7 @@ import { formatRoundClock } from '@/game/round-duration';
 import { useRound } from '@/game/round-context';
 import { useForeheadPosition } from '@/hooks/use-forehead-position';
 import { colors, radius, spacing, typography } from '@/theme';
+import { lockLandscapeOrientation, lockPortraitOrientation } from '@/utils/orientation';
 
 export default function ReadyScreen() {
   const { height } = useWindowDimensions();
@@ -18,29 +18,19 @@ export default function ReadyScreen() {
   const [count, setCount] = useState(3);
   const [manualReady, setManualReady] = useState(false);
   const [orientationSettled, setOrientationSettled] = useState(false);
+  const [isLeaving, setIsLeaving] = useState(false);
   const launched = useRef(false);
   const foreheadStatus = useForeheadPosition(round.status === 'ready');
   const positionReady = foreheadStatus === 'ready' || manualReady;
 
   useEffect(() => {
     let active = true;
-    let settleTimer: ReturnType<typeof setTimeout> | undefined;
-    const fallbackTimer = setTimeout(() => {
+    lockLandscapeOrientation().finally(() => {
       if (active) setOrientationSettled(true);
-    }, 900);
-
-    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE)
-      .catch(() => undefined)
-      .finally(() => {
-        settleTimer = setTimeout(() => {
-          if (active) setOrientationSettled(true);
-        }, 120);
-      });
+    });
 
     return () => {
       active = false;
-      clearTimeout(fallbackTimer);
-      if (settleTimer) clearTimeout(settleTimer);
     };
   }, []);
 
@@ -60,7 +50,7 @@ export default function ReadyScreen() {
       return;
     }
 
-    if (!positionReady || !orientationSettled) return;
+    if (!positionReady || !orientationSettled || isLeaving) return;
 
     const timeout = setTimeout(() => {
       if (count === 1 && !launched.current) {
@@ -72,7 +62,7 @@ export default function ReadyScreen() {
       setCount((value) => Math.max(1, value - 1));
     }, 1000);
     return () => clearTimeout(timeout);
-  }, [count, deck, orientationSettled, positionReady, round.status, router]);
+  }, [count, deck, isLeaving, orientationSettled, positionReady, round.status, router]);
 
   if (!deck) return null;
 
@@ -85,14 +75,18 @@ export default function ReadyScreen() {
 
   const countSize = Math.max(92, Math.min(138, height * 0.34));
 
-  const handleCancel = () => {
+  const handleCancel = async () => {
+    setIsLeaving(true);
+    await lockPortraitOrientation();
     resetRound();
-    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => undefined);
     router.replace(`/deck/${deck.id}`);
   };
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: deck.color }]}>
+    <SafeAreaView
+      edges={['left', 'right', 'bottom']}
+      style={[styles.safeArea, { backgroundColor: deck.color }]}
+    >
       <View style={styles.topRow}>
         <Text style={styles.duration}>{formatRoundClock(round.durationSeconds)}</Text>
         <Text style={typography.deckName}>{deck.icon} {deck.title}</Text>
@@ -128,7 +122,12 @@ export default function ReadyScreen() {
       </View>
 
       <View style={styles.footer}>
-        <Pressable accessibilityRole="button" onPress={handleCancel} style={styles.cancelButton}>
+        <Pressable
+          accessibilityRole="button"
+          disabled={isLeaving}
+          onPress={handleCancel}
+          style={styles.cancelButton}
+        >
           <Text style={styles.cancelText}>CANCEL</Text>
         </Pressable>
       </View>

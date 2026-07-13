@@ -1,6 +1,5 @@
 import * as Haptics from 'expo-haptics';
 import { useKeepAwake } from 'expo-keep-awake';
-import * as ScreenOrientation from 'expo-screen-orientation';
 import { type Href, useRouter } from 'expo-router';
 import { useCallback, useEffect } from 'react';
 import {
@@ -21,6 +20,7 @@ import { formatRoundClock } from '@/game/round-duration';
 import { useRoundTimer } from '@/hooks/use-round-timer';
 import { useTiltControls } from '@/hooks/use-tilt-controls';
 import { colors, radius, spacing, typography } from '@/theme';
+import { lockPortraitOrientation } from '@/utils/orientation';
 
 export default function GameScreen() {
   useKeepAwake();
@@ -70,10 +70,6 @@ export default function GameScreen() {
   }, [finishRound]);
 
   useEffect(() => {
-    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => undefined);
-  }, []);
-
-  useEffect(() => {
     if (!deck || !currentCard || round.status === 'idle') {
       router.replace('/');
     }
@@ -93,7 +89,16 @@ export default function GameScreen() {
   }, [advanceCard, round.status]);
 
   useEffect(() => {
-    if (round.status === 'finished') router.replace('/results' as Href);
+    if (round.status !== 'finished') return;
+    let active = true;
+    const showResults = async () => {
+      await lockPortraitOrientation();
+      if (active) router.replace('/results' as Href);
+    };
+    showResults();
+    return () => {
+      active = false;
+    };
   }, [round.status, router]);
 
   useEffect(() => {
@@ -112,7 +117,10 @@ export default function GameScreen() {
   const cardFontSize = getCardFontSize(currentCard.text, width, height);
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: deck.color }]}>
+    <SafeAreaView
+      edges={['left', 'right', 'bottom']}
+      style={[styles.safeArea, { backgroundColor: deck.color }]}
+    >
       <View style={styles.topRow}>
         <Pressable
           accessibilityRole="button"
@@ -191,6 +199,10 @@ export default function GameScreen() {
           <Text style={styles.setupTitle}>Hold steady</Text>
           <Text style={styles.setupText}>{getTiltStatusLabel(tiltStatus)}</Text>
         </View>
+      )}
+
+      {round.status === 'finished' && (
+        <View style={[styles.transitionOverlay, { backgroundColor: deck.color }]} />
       )}
     </SafeAreaView>
   );
@@ -311,4 +323,5 @@ const styles = StyleSheet.create({
     letterSpacing: 1.3,
     marginTop: spacing.sm,
   },
+  transitionOverlay: { ...StyleSheet.absoluteFill },
 });
