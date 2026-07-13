@@ -76,11 +76,13 @@ export function ScreenshotTransitionProvider({ children }: PropsWithChildren) {
             easing: Easing.out(Easing.cubic),
             useNativeDriver: true,
           }).start(() => {
-            releaseCapture(current.uri);
             transitionRef.current = null;
             setTransition(null);
             isRevealing.current = false;
-            translateX.setValue(0);
+
+            // Let React remove the overlay before releasing its image. Resetting
+            // the animation here can briefly redraw it at its starting point.
+            setTimeout(() => releaseCapture(current.uri), 0);
           });
         });
       });

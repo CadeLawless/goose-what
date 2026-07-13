@@ -29,7 +29,12 @@ export default function RootLayout() {
       >
         <Stack.Screen
           name="index"
-          options={{ headerShown: false, orientation: 'portrait', title: 'Back to Decks' }}
+          options={{
+            animation: 'none',
+            headerShown: false,
+            orientation: 'portrait',
+            title: 'Back to Decks',
+          }}
         />
         <Stack.Screen
           name="deck/[deckId]"
