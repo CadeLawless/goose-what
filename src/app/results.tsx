@@ -1,7 +1,8 @@
 import { type Href, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { captureRef } from 'react-native-view-shot';
 
 import { getDeckById } from '@/data/decks';
 import { OrientationTransition, PortraitTransition } from '@/components/orientation-transition';
@@ -14,8 +15,10 @@ export default function ResultsScreen() {
   const router = useRouter();
   const { round, configureRound, resetRound } = useRound();
   const [isStarting, setIsStarting] = useState(false);
+  const [isLeaving, setIsLeaving] = useState(false);
+  const screenRef = useRef<View>(null);
   const isPortrait = usePortraitScreen();
-  const { revealTransition } = useScreenshotTransition();
+  const { beginTransition, revealTransition } = useScreenshotTransition();
   const deck = getDeckById(round.deckId ?? undefined);
   const correctCount = round.results.filter((result) => result.outcome === 'correct').length;
   const passedCount = round.results.length - correctCount;
@@ -46,13 +49,30 @@ export default function ResultsScreen() {
     router.replace('/ready' as Href);
   };
 
-  const handleHome = () => {
+  const handleHome = async () => {
+    if (isLeaving) return;
+    setIsLeaving(true);
+    try {
+      const uri = await captureRef(screenRef, {
+        format: 'jpg',
+        quality: 0.95,
+        result: 'tmpfile',
+      });
+      await beginTransition({ destination: 'home', direction: 'right', uri });
+    } catch {
+      // If capture is unavailable, navigation still completes normally.
+    }
     resetRound();
     router.replace('/');
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+    <SafeAreaView
+      ref={screenRef}
+      collapsable={false}
+      style={styles.safeArea}
+      edges={['top', 'bottom']}
+    >
       <FlatList
         data={round.results}
         style={styles.list}
@@ -93,13 +113,14 @@ export default function ResultsScreen() {
       />
       <View style={styles.actions}>
         <Pressable
-          disabled={isStarting}
+          disabled={isStarting || isLeaving}
           onPress={handleReplay}
           style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}
         >
           <Text style={styles.primaryButtonText}>PLAY AGAIN</Text>
         </Pressable>
         <Pressable
+          disabled={isLeaving}
           onPress={handleHome}
           style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
         >
