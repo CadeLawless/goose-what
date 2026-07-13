@@ -1,9 +1,8 @@
 import * as Haptics from 'expo-haptics';
 import { useKeepAwake } from 'expo-keep-awake';
 import { type Href, useRouter } from 'expo-router';
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
-  Alert,
   AppState,
   Platform,
   Pressable,
@@ -25,6 +24,7 @@ import { lockPortraitOrientation } from '@/utils/orientation';
 export default function GameScreen() {
   useKeepAwake();
   const { width, height } = useWindowDimensions();
+  const [finishPromptVisible, setFinishPromptVisible] = useState(false);
   const router = useRouter();
   const { round, answerCard, advanceCard, finishRound, startRound } = useRound();
   const deck = getDeckById(round.deckId ?? undefined);
@@ -54,19 +54,11 @@ export default function GameScreen() {
     onAction: handleAnswer,
   });
   const handleFinishEarly = useCallback(() => {
-    if (Platform.OS === 'web') {
-      finishRound();
-      return;
-    }
-
-    Alert.alert(
-      'Finish round early?',
-      'Your answers so far will still appear in the results.',
-      [
-        { text: 'Keep Playing', style: 'cancel' },
-        { text: 'Finish Round', style: 'destructive', onPress: finishRound },
-      ],
-    );
+    setFinishPromptVisible(true);
+  }, []);
+  const confirmFinishEarly = useCallback(() => {
+    setFinishPromptVisible(false);
+    finishRound();
   }, [finishRound]);
 
   useEffect(() => {
@@ -204,6 +196,33 @@ export default function GameScreen() {
       {round.status === 'finished' && (
         <View style={[styles.transitionOverlay, { backgroundColor: deck.color }]} />
       )}
+
+      {finishPromptVisible && round.status !== 'finished' && (
+        <View accessibilityViewIsModal style={styles.promptOverlay}>
+          <View style={styles.promptCard}>
+            <Text style={styles.promptTitle}>Finish round early?</Text>
+            <Text style={styles.promptBody}>
+              Your answers so far will still appear in the results.
+            </Text>
+            <View style={styles.promptActions}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setFinishPromptVisible(false)}
+                style={({ pressed }) => [styles.promptCancel, pressed && styles.promptPressed]}
+              >
+                <Text style={styles.promptCancelText}>KEEP PLAYING</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={confirmFinishEarly}
+                style={({ pressed }) => [styles.promptFinish, pressed && styles.promptPressed]}
+              >
+                <Text style={styles.promptFinishText}>FINISH ROUND</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -324,4 +343,47 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   transitionOverlay: { ...StyleSheet.absoluteFill },
+  promptOverlay: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xl,
+    backgroundColor: 'rgba(24,35,29,0.42)',
+  },
+  promptCard: {
+    width: '100%',
+    maxWidth: 440,
+    padding: spacing.xl,
+    borderRadius: radius.xl,
+    backgroundColor: colors.background,
+  },
+  promptTitle: { ...typography.title, color: colors.ink, textAlign: 'center' },
+  promptBody: {
+    ...typography.body,
+    color: colors.muted,
+    textAlign: 'center',
+    marginTop: spacing.sm,
+  },
+  promptActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xl },
+  promptCancel: {
+    flex: 1,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  promptFinish: {
+    flex: 1,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.lg,
+    backgroundColor: colors.pass,
+  },
+  promptPressed: { opacity: 0.75, transform: [{ scale: 0.99 }] },
+  promptCancelText: { color: colors.ink, fontSize: 10, fontWeight: '900', letterSpacing: 0.9 },
+  promptFinishText: { color: colors.ink, fontSize: 10, fontWeight: '900', letterSpacing: 0.9 },
 });
