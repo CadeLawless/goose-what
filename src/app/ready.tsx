@@ -11,19 +11,37 @@ import { useForeheadPosition } from '@/hooks/use-forehead-position';
 import { colors, radius, spacing, typography } from '@/theme';
 
 export default function ReadyScreen() {
-  const { width, height } = useWindowDimensions();
+  const { height } = useWindowDimensions();
   const router = useRouter();
   const { round, resetRound } = useRound();
   const deck = getDeckById(round.deckId ?? undefined);
   const [count, setCount] = useState(3);
   const [manualReady, setManualReady] = useState(false);
+  const [orientationSettled, setOrientationSettled] = useState(false);
   const launched = useRef(false);
   const foreheadStatus = useForeheadPosition(round.status === 'ready');
   const positionReady = foreheadStatus === 'ready' || manualReady;
-  const isLandscapeLayout = width > height;
 
   useEffect(() => {
-    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => undefined);
+    let active = true;
+    let settleTimer: ReturnType<typeof setTimeout> | undefined;
+    const fallbackTimer = setTimeout(() => {
+      if (active) setOrientationSettled(true);
+    }, 900);
+
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE)
+      .catch(() => undefined)
+      .finally(() => {
+        settleTimer = setTimeout(() => {
+          if (active) setOrientationSettled(true);
+        }, 120);
+      });
+
+    return () => {
+      active = false;
+      clearTimeout(fallbackTimer);
+      if (settleTimer) clearTimeout(settleTimer);
+    };
   }, []);
 
   useEffect(() => {
@@ -42,7 +60,7 @@ export default function ReadyScreen() {
       return;
     }
 
-    if (!positionReady || !isLandscapeLayout) return;
+    if (!positionReady || !orientationSettled) return;
 
     const timeout = setTimeout(() => {
       if (count === 1 && !launched.current) {
@@ -54,14 +72,13 @@ export default function ReadyScreen() {
       setCount((value) => Math.max(1, value - 1));
     }, 1000);
     return () => clearTimeout(timeout);
-  }, [count, deck, isLandscapeLayout, positionReady, round.status, router]);
+  }, [count, deck, orientationSettled, positionReady, round.status, router]);
 
   if (!deck) return null;
 
-  if (!isLandscapeLayout) {
+  if (!orientationSettled) {
     return (
       <View style={[styles.rotationShell, { backgroundColor: deck.color }]}>
-        <Text style={styles.rotationText}>Turning sideways...</Text>
       </View>
     );
   }
@@ -136,7 +153,6 @@ function getPositionMessage(status: ReturnType<typeof useForeheadPosition>) {
 
 const styles = StyleSheet.create({
   rotationShell: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  rotationText: { color: colors.ink, fontSize: 16, fontWeight: '800' },
   safeArea: { flex: 1, padding: spacing.lg, overflow: 'hidden' },
   topRow: {
     flexDirection: 'row',
