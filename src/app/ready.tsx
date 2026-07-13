@@ -1,12 +1,14 @@
-import { type Href, Stack, useRouter } from 'expo-router';
+import { type Href, useRouter } from 'expo-router';
 import { useAudioPlayer } from 'expo-audio';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { captureRef } from 'react-native-view-shot';
 
 import { getDeckById } from '@/data/decks';
 import { OrientationTransition } from '@/components/orientation-transition';
+import { useScreenshotTransition } from '@/components/screenshot-transition-provider';
 import { formatRoundClock } from '@/game/round-duration';
 import { useRound } from '@/game/round-context';
 import { useForeheadPosition } from '@/hooks/use-forehead-position';
@@ -19,7 +21,6 @@ const GET_READY_SOUND_MS = 1050;
 export default function ReadyScreen() {
   const { width, height } = useWindowDimensions();
   const hasLandscapeLayout = Platform.OS === 'web' || width > height;
-  const hasPortraitLayout = Platform.OS === 'web' || height >= width;
   const router = useRouter();
   const { round, resetRound } = useRound();
   const deck = getDeckById(round.deckId ?? undefined);
@@ -30,6 +31,8 @@ export default function ReadyScreen() {
   const [isLeaving, setIsLeaving] = useState(false);
   const launched = useRef(false);
   const introStarted = useRef(false);
+  const screenRef = useRef<View>(null);
+  const { beginTransition } = useScreenshotTransition();
   const getReadyPlayer = useAudioPlayer(require('../../assets/sounds/get-ready.wav'));
   const count3Player = useAudioPlayer(require('../../assets/sounds/count-3.wav'));
   const count2Player = useAudioPlayer(require('../../assets/sounds/count-2.wav'));
@@ -106,40 +109,37 @@ export default function ReadyScreen() {
     return () => clearTimeout(timeout);
   }, [count, deck, introComplete, isLeaving, orientationSettled, positionReady, round.status, router]);
 
-  useEffect(() => {
-    if (!isLeaving || !hasPortraitLayout || !deck) return;
-    resetRound();
-    if (router.canGoBack()) {
-      router.back();
-    } else {
-      router.replace(`/deck/${deck.id}`);
-    }
-  }, [deck, hasPortraitLayout, isLeaving, resetRound, router]);
-
   if (!deck) return null;
 
-  if (!isLeaving && (!orientationSettled || !hasLandscapeLayout)) {
+  if (!orientationSettled || !hasLandscapeLayout) {
     return <OrientationTransition style={styles.rotationShell} />;
   }
 
   const countSize = Math.max(92, Math.min(138, height * 0.34));
 
-  const handleCancel = () => {
+  const handleCancel = async () => {
     setIsLeaving(true);
+    try {
+      const uri = await captureRef(screenRef, {
+        format: 'jpg',
+        quality: 0.95,
+        result: 'tmpfile',
+      });
+      await beginTransition({ destination: 'home', direction: 'right', uri });
+    } catch {
+      // If capture is unavailable, navigation still completes normally.
+    }
+    resetRound();
+    router.replace('/');
   };
 
   return (
-    <>
-      <Stack.Screen
-        options={{
-          animation: isLeaving ? 'slide_from_right' : 'none',
-          orientation: isLeaving ? 'portrait' : 'landscape_right',
-        }}
-      />
-      <SafeAreaView
-        edges={['left', 'right', 'bottom']}
-        style={[styles.safeArea, { backgroundColor: colors.play }]}
-      >
+    <SafeAreaView
+      ref={screenRef}
+      collapsable={false}
+      edges={['left', 'right', 'bottom']}
+      style={[styles.safeArea, { backgroundColor: colors.play }]}
+    >
       <StatusBar hidden animated={false} />
       <View style={styles.topRow}>
         <Text style={styles.duration}>{formatRoundClock(round.durationSeconds)}</Text>
@@ -189,8 +189,7 @@ export default function ReadyScreen() {
           <Text style={styles.cancelText}>CANCEL</Text>
         </Pressable>
       </View>
-      </SafeAreaView>
-    </>
+    </SafeAreaView>
   );
 }
 

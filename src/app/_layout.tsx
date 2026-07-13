@@ -6,6 +6,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { colors } from '@/theme';
 import { RoundProvider } from '@/game/round-context';
+import { ScreenshotTransitionProvider } from '@/components/screenshot-transition-provider';
 
 export default function RootLayout() {
   useEffect(() => {
@@ -14,9 +15,10 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <RoundProvider>
-        <StatusBar style="dark" />
-        <Stack
+      <ScreenshotTransitionProvider>
+        <RoundProvider>
+          <StatusBar style="dark" />
+          <Stack
         screenOptions={{
           contentStyle: { backgroundColor: colors.background },
           headerShadowVisible: false,
@@ -60,12 +62,13 @@ export default function RootLayout() {
           options={{
             headerShown: false,
             gestureEnabled: false,
-            animation: 'fade',
+            animation: 'none',
             orientation: 'portrait',
           }}
         />
-        </Stack>
-      </RoundProvider>
+          </Stack>
+        </RoundProvider>
+      </ScreenshotTransitionProvider>
     </SafeAreaProvider>
   );
 }

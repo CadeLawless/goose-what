@@ -1,10 +1,11 @@
 import { type Href, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { getDeckById } from '@/data/decks';
 import { OrientationTransition, PortraitTransition } from '@/components/orientation-transition';
+import { useScreenshotTransition } from '@/components/screenshot-transition-provider';
 import { useRound } from '@/game/round-context';
 import { usePortraitScreen } from '@/hooks/use-portrait-screen';
 import { colors, radius, spacing, typography } from '@/theme';
@@ -14,9 +15,14 @@ export default function ResultsScreen() {
   const { round, configureRound, resetRound } = useRound();
   const [isStarting, setIsStarting] = useState(false);
   const isPortrait = usePortraitScreen();
+  const { revealTransition } = useScreenshotTransition();
   const deck = getDeckById(round.deckId ?? undefined);
   const correctCount = round.results.filter((result) => result.outcome === 'correct').length;
   const passedCount = round.results.length - correctCount;
+
+  useEffect(() => {
+    if (isPortrait) revealTransition('results');
+  }, [isPortrait, revealTransition]);
 
   if (!isPortrait) {
     return <PortraitTransition style={styles.orientationGate} />;

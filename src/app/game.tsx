@@ -1,7 +1,7 @@
 import * as Haptics from 'expo-haptics';
 import { useAudioPlayer } from 'expo-audio';
 import { useKeepAwake } from 'expo-keep-awake';
-import { type Href, Stack, useRouter } from 'expo-router';
+import { type Href, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -14,7 +14,9 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { captureRef } from 'react-native-view-shot';
 
+import { useScreenshotTransition } from '@/components/screenshot-transition-provider';
 import { getDeckById } from '@/data/decks';
 import { useRound } from '@/game/round-context';
 import { formatRoundClock } from '@/game/round-duration';
@@ -29,17 +31,19 @@ export default function GameScreen() {
   useKeepAwake();
   const { width, height } = useWindowDimensions();
   const [finishPromptVisible, setFinishPromptVisible] = useState(false);
-  const [finishDelayComplete, setFinishDelayComplete] = useState(false);
   const roundStarted = useRef(false);
   const startSoundPlayed = useRef(false);
   const lastTickSecond = useRef<number | null>(null);
   const finishSoundPlayed = useRef(false);
+  const screenRef = useRef<View>(null);
+  const resultsTransitionStarted = useRef(false);
   const roundStartPlayer = useAudioPlayer(require('../../assets/sounds/round-start.wav'));
   const finalTickPlayer = useAudioPlayer(require('../../assets/sounds/final-tick.wav'));
   const correctPlayer = useAudioPlayer(require('../../assets/sounds/correct.wav'));
   const passPlayer = useAudioPlayer(require('../../assets/sounds/pass.wav'));
   const roundEndPlayer = useAudioPlayer(require('../../assets/sounds/round-end.wav'));
   const router = useRouter();
+  const { beginTransition } = useScreenshotTransition();
   const { round, answerCard, advanceCard, finishRound, startRound } = useRound();
   const deck = getDeckById(round.deckId ?? undefined);
   const currentCardId = round.cardOrder[round.currentCardIndex];
@@ -122,22 +126,29 @@ export default function GameScreen() {
       finishSoundPlayed.current = true;
       replaySound(roundEndPlayer);
     }
+    if (resultsTransitionStarted.current) return;
+    resultsTransitionStarted.current = true;
     let active = true;
     const showResults = async () => {
       await new Promise((resolve) => setTimeout(resolve, ROUND_END_SCREEN_MS));
-      if (active) setFinishDelayComplete(true);
+      if (!active) return;
+      try {
+        const uri = await captureRef(screenRef, {
+          format: 'jpg',
+          quality: 0.95,
+          result: 'tmpfile',
+        });
+        await beginTransition({ destination: 'results', direction: 'left', uri });
+      } catch {
+        // If capture is unavailable, navigation still completes normally.
+      }
+      if (active) router.replace('/results' as Href);
     };
     showResults();
     return () => {
       active = false;
     };
-  }, [round.status, roundEndPlayer, router]);
-
-  useEffect(() => {
-    if (round.status !== 'finished' || !finishDelayComplete) return;
-    if (Platform.OS !== 'web' && width > height) return;
-    router.replace('/results' as Href);
-  }, [finishDelayComplete, height, round.status, router, width]);
+  }, [beginTransition, round.status, roundEndPlayer, router]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
@@ -155,16 +166,12 @@ export default function GameScreen() {
   const cardFontSize = getCardFontSize(currentCard.text, width, height);
 
   return (
-    <>
-      <Stack.Screen
-        options={{
-          orientation: round.status === 'finished' ? 'portrait' : 'landscape_right',
-        }}
-      />
-      <SafeAreaView
-        edges={['left', 'right', 'bottom']}
-        style={[styles.safeArea, { backgroundColor: colors.play }]}
-      >
+    <SafeAreaView
+      ref={screenRef}
+      collapsable={false}
+      edges={['left', 'right', 'bottom']}
+      style={[styles.safeArea, { backgroundColor: colors.play }]}
+    >
       <StatusBar hidden animated={false} />
       <View style={styles.topRow}>
         <Pressable
@@ -279,8 +286,7 @@ export default function GameScreen() {
           </View>
         </View>
       )}
-      </SafeAreaView>
-    </>
+    </SafeAreaView>
   );
 }
 

@@ -1,8 +1,10 @@
+import { useEffect } from 'react';
 import { ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DeckCard } from '@/components/deck-card';
 import { PortraitTransition } from '@/components/orientation-transition';
+import { useScreenshotTransition } from '@/components/screenshot-transition-provider';
 import { decks } from '@/data/decks';
 import { usePortraitScreen } from '@/hooks/use-portrait-screen';
 import { colors, radius, spacing, typography } from '@/theme';
@@ -10,9 +12,14 @@ import { colors, radius, spacing, typography } from '@/theme';
 export default function DeckLibraryScreen() {
   const { width } = useWindowDimensions();
   const isPortrait = usePortraitScreen();
+  const { revealTransition } = useScreenshotTransition();
   const gridWidth = Math.min(width, 720);
   const deckWidth = Math.floor((gridWidth - spacing.lg * 2 - spacing.sm * 2) / 3);
   const deckHeight = Math.round(deckWidth / 0.72);
+
+  useEffect(() => {
+    if (isPortrait) revealTransition('home');
+  }, [isPortrait, revealTransition]);
 
   if (!isPortrait) return <PortraitTransition style={styles.orientationGate} />;
 
