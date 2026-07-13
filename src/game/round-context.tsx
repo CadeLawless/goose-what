@@ -1,10 +1,11 @@
-import { createContext, type PropsWithChildren, useContext, useMemo, useReducer } from 'react';
+import { createContext, type PropsWithChildren, useContext, useMemo, useReducer, useRef } from 'react';
 
 import { getDeckById } from '@/data/decks';
 import { initialRoundState, roundReducer } from '@/game/game-reducer';
 import type { CardOutcome, RoundState } from '@/game/game-types';
 import { clampRoundDuration } from '@/game/round-duration';
 import { shuffle } from '@/game/shuffle';
+import { getSessionCardPool } from '@/game/session-card-memory';
 
 type RoundContextValue = {
   round: RoundState;
@@ -20,6 +21,14 @@ const RoundContext = createContext<RoundContextValue | null>(null);
 
 export function RoundProvider({ children }: PropsWithChildren) {
   const [round, dispatch] = useReducer(roundReducer, initialRoundState);
+  const seenCardsByDeck = useRef(new Map<string, Set<string>>());
+
+  const rememberCard = (deckId: string | null, cardId: string | undefined) => {
+    if (!deckId || !cardId) return;
+    const seenCards = seenCardsByDeck.current.get(deckId) ?? new Set<string>();
+    seenCards.add(cardId);
+    seenCardsByDeck.current.set(deckId, seenCards);
+  };
 
   const value = useMemo<RoundContextValue>(
     () => ({
@@ -27,17 +36,32 @@ export function RoundProvider({ children }: PropsWithChildren) {
       configureRound: (deckId, durationSeconds) => {
         const deck = getDeckById(deckId);
         if (!deck) return false;
+        const seenCards = seenCardsByDeck.current.get(deckId) ?? new Set<string>();
+        const pool = getSessionCardPool(
+          deck.cards.map((card) => card.id),
+          seenCards,
+        );
+        if (pool.resetMemory) seenCards.clear();
+        seenCardsByDeck.current.set(deckId, seenCards);
         dispatch({
           type: 'CONFIGURE',
           deckId,
           durationSeconds: clampRoundDuration(durationSeconds),
-          cardOrder: shuffle(deck.cards.map((card) => card.id)),
+          cardOrder: shuffle(pool.cardIds),
         });
         return true;
       },
-      startRound: () => dispatch({ type: 'START', now: Date.now() }),
+      startRound: () => {
+        rememberCard(round.deckId, round.cardOrder[round.currentCardIndex]);
+        dispatch({ type: 'START', now: Date.now() });
+      },
       answerCard: (outcome) => dispatch({ type: 'ANSWER', outcome, now: Date.now() }),
-      advanceCard: () => dispatch({ type: 'ADVANCE' }),
+      advanceCard: () => {
+        if (round.status === 'feedback') {
+          rememberCard(round.deckId, round.cardOrder[round.currentCardIndex + 1]);
+        }
+        dispatch({ type: 'ADVANCE' });
+      },
       finishRound: () => dispatch({ type: 'FINISH' }),
       resetRound: () => dispatch({ type: 'RESET' }),
     }),
