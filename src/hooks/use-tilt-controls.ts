@@ -5,6 +5,7 @@ import { DeviceMotion } from 'expo-sensors';
 import type { TiltAction } from '@/game/tilt-detector';
 import {
   createTiltDetectorState,
+  isLandscapeOrientation,
   normalizeLandscapeTilt,
   updateTiltDetector,
 } from '@/game/tilt-detector';
@@ -20,6 +21,7 @@ type UseTiltControlsOptions = {
 export function useTiltControls({ enabled, acceptingInput, onAction }: UseTiltControlsOptions) {
   const [status, setStatus] = useState<TiltControlStatus>('checking');
   const detector = useRef(createTiltDetectorState());
+  const landscapeOrientation = useRef<90 | -90 | null>(null);
   const acceptingInputRef = useRef(acceptingInput);
   const onActionRef = useRef(onAction);
 
@@ -40,6 +42,7 @@ export function useTiltControls({ enabled, acceptingInput, onAction }: UseTiltCo
     const connect = async () => {
       setStatus('checking');
       detector.current = createTiltDetectorState();
+      landscapeOrientation.current = null;
 
       // Browser support varies widely and some Expo web implementations report
       // availability without exposing the listener API. The web MVP therefore
@@ -72,8 +75,20 @@ export function useTiltControls({ enabled, acceptingInput, onAction }: UseTiltCo
       setStatus('calibrating');
       try {
         subscription = DeviceMotion.addListener((measurement) => {
+          if (!isLandscapeOrientation(measurement.orientation)) return;
+          if (landscapeOrientation.current === null) {
+            landscapeOrientation.current = measurement.orientation;
+          }
+          if (measurement.orientation !== landscapeOrientation.current) return;
+
           const angle = normalizeLandscapeTilt(measurement.rotation.gamma, measurement.orientation);
-          const result = updateTiltDetector(detector.current, angle);
+          if (angle === null) return;
+          const result = updateTiltDetector(
+            detector.current,
+            angle,
+            undefined,
+            acceptingInputRef.current,
+          );
           detector.current = result.state;
 
           if (result.calibrated) setStatus((current) => (current === 'ready' ? current : 'ready'));

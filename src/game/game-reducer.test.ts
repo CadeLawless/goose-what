@@ -8,6 +8,7 @@ import {
   createTiltDetectorState,
   isForeheadPosition,
   normalizeLandscapeTilt,
+  unwrapTiltAngle,
   updateTiltDetector,
 } from './tilt-detector';
 
@@ -96,9 +97,13 @@ describe('round duration', () => {
 describe('tilt detector', () => {
   const config = {
     calibrationSamples: 2,
+    calibrationMovementTolerance: 1,
     smoothingFactor: 1,
     triggerAngle: 0.6,
+    confirmationSamples: 1,
     neutralAngle: 0.2,
+    rearmSamples: 1,
+    baselineAdjustmentFactor: 0,
   };
 
   it('calibrates before accepting a tilt', () => {
@@ -129,6 +134,37 @@ describe('tilt detector', () => {
   it('normalizes left-landscape readings', () => {
     assert.equal(normalizeLandscapeTilt(0.5, 90), 0.5);
     assert.equal(normalizeLandscapeTilt(0.5, -90), -0.5);
+    assert.equal(normalizeLandscapeTilt(0.5, 0), null);
+  });
+
+  it('unwraps the gamma discontinuity without reversing the gesture', () => {
+    const beforeBoundary = Math.PI / 2 - 0.04;
+    const afterBoundary = -Math.PI / 2 + 0.04;
+    const unwrapped = unwrapTiltAngle(afterBoundary, beforeBoundary, beforeBoundary);
+
+    assert.ok(unwrapped > beforeBoundary);
+    assert.ok(Math.abs(unwrapped - (beforeBoundary + 0.08)) < 0.001);
+  });
+
+  it('does not consume a return movement while feedback blocks input', () => {
+    let result = updateTiltDetector(createTiltDetectorState(), 0, config, false);
+    result = updateTiltDetector(result.state, 0, config, false);
+    result = updateTiltDetector(result.state, -0.8, config, false);
+
+    assert.equal(result.action, null);
+    assert.equal(result.state.armed, true);
+    assert.equal(result.state.candidateAction, null);
+  });
+
+  it('confirms a direction across multiple samples before acting', () => {
+    const confirmedConfig = { ...config, confirmationSamples: 2 };
+    let result = updateTiltDetector(createTiltDetectorState(), 0, confirmedConfig);
+    result = updateTiltDetector(result.state, 0, confirmedConfig);
+    result = updateTiltDetector(result.state, 0.7, confirmedConfig);
+    assert.equal(result.action, null);
+
+    result = updateTiltDetector(result.state, 0.72, confirmedConfig);
+    assert.equal(result.action, 'correct');
   });
 
   it('recognizes a landscape phone held vertically against the forehead', () => {
