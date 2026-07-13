@@ -1,7 +1,7 @@
 import * as Haptics from 'expo-haptics';
 import { useAudioPlayer } from 'expo-audio';
 import { useKeepAwake } from 'expo-keep-awake';
-import { type Href, useRouter } from 'expo-router';
+import { type Href, Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -23,10 +23,13 @@ import { useTiltControls } from '@/hooks/use-tilt-controls';
 import { colors, radius, spacing, typography } from '@/theme';
 import { replaySound } from '@/utils/sound';
 
+const ROUND_END_SCREEN_MS = 1000;
+
 export default function GameScreen() {
   useKeepAwake();
   const { width, height } = useWindowDimensions();
   const [finishPromptVisible, setFinishPromptVisible] = useState(false);
+  const [finishDelayComplete, setFinishDelayComplete] = useState(false);
   const roundStarted = useRef(false);
   const startSoundPlayed = useRef(false);
   const lastTickSecond = useRef<number | null>(null);
@@ -121,14 +124,20 @@ export default function GameScreen() {
     }
     let active = true;
     const showResults = async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1600));
-      if (active) router.replace('/results' as Href);
+      await new Promise((resolve) => setTimeout(resolve, ROUND_END_SCREEN_MS));
+      if (active) setFinishDelayComplete(true);
     };
     showResults();
     return () => {
       active = false;
     };
   }, [round.status, roundEndPlayer, router]);
+
+  useEffect(() => {
+    if (round.status !== 'finished' || !finishDelayComplete) return;
+    if (Platform.OS !== 'web' && width > height) return;
+    router.replace('/results' as Href);
+  }, [finishDelayComplete, height, round.status, router, width]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
@@ -146,10 +155,16 @@ export default function GameScreen() {
   const cardFontSize = getCardFontSize(currentCard.text, width, height);
 
   return (
-    <SafeAreaView
-      edges={['left', 'right', 'bottom']}
-      style={[styles.safeArea, { backgroundColor: colors.play }]}
-    >
+    <>
+      <Stack.Screen
+        options={{
+          orientation: round.status === 'finished' ? 'portrait' : 'landscape_right',
+        }}
+      />
+      <SafeAreaView
+        edges={['left', 'right', 'bottom']}
+        style={[styles.safeArea, { backgroundColor: colors.play }]}
+      >
       <StatusBar hidden animated={false} />
       <View style={styles.topRow}>
         <Pressable
@@ -264,7 +279,8 @@ export default function GameScreen() {
           </View>
         </View>
       )}
-    </SafeAreaView>
+      </SafeAreaView>
+    </>
   );
 }
 
