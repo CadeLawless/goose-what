@@ -54,6 +54,12 @@ export const typography = {
     lineHeight: 25,
     fontWeight: '500',
   },
+  deckTitle: {
+    color: colors.white,
+    fontWeight: '900',
+    textAlign: 'left',
+    textTransform: 'uppercase',
+  },
   deckName: {
     color: colors.ink,
     fontSize: 15,
