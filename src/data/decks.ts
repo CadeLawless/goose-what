@@ -262,7 +262,7 @@ export const decks: Deck[] = [
       { id: 'snack-056', text: 'Jolly Ranchers' },
       { id: 'snack-057', text: 'Lemonheads' },
       { id: 'snack-058', text: 'Mike and Ike' },
-      { id: 'snack-059', text: 'Joyride },
+      { id: 'snack-059', text: 'Joyride' },
       { id: 'snack-060', text: 'Jelly Beans' },
       { id: 'snack-061', text: 'Reese\'s Peanut Butter Cups' },
       { id: 'snack-062', text: 'Kit Kat' },
