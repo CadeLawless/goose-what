@@ -61,6 +61,7 @@ export function RoundVideoPlayer({ video, style }: RoundVideoPlayerProps) {
             nativeControls={false}
             player={player}
             style={StyleSheet.absoluteFill}
+            surfaceType="textureView"
           />
           <PlaybackOverlay event={event} compact />
           <Pressable
@@ -87,16 +88,18 @@ export function RoundVideoPlayer({ video, style }: RoundVideoPlayerProps) {
               nativeControls
               player={player}
               style={StyleSheet.absoluteFill}
+              surfaceType="textureView"
             />
             <PlaybackOverlay event={event} />
           </View>
           <Pressable
             accessibilityLabel="Close video"
             accessibilityRole="button"
+            hitSlop={16}
             onPress={closeExpanded}
             style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}
           >
-            <Text style={styles.closeText}>×</Text>
+            <Text style={styles.closeText}>X</Text>
           </Pressable>
         </SafeAreaView>
       </Modal>
@@ -218,7 +221,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.62)',
+    zIndex: 20,
+    elevation: 20,
   },
-  closeText: { color: colors.white, fontSize: 34, lineHeight: 38, fontWeight: '500' },
+  closeText: { color: colors.white, fontSize: 20, lineHeight: 24, fontWeight: '900' },
   pressed: { opacity: 0.7, transform: [{ scale: 0.96 }] },
 });

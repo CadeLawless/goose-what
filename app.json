@@ -13,7 +13,9 @@
       "supportsTablet": true,
       "requireFullScreen": true,
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "Allow WHATZ IT to record the clue-givers during a round.",
+        "NSMicrophoneUsageDescription": "Allow WHATZ IT to record the clues and reactions during a round."
       }
     },
     "android": {
@@ -69,15 +71,6 @@
         {
           "microphonePermission": "Allow WHATZ IT to record the clues and reactions during a round.",
           "recordAudioAndroid": true
-        }
-      ],
-      [
-        "expo-camera",
-        {
-          "cameraPermission": "Allow WHATZ IT to record the clue-givers during a round.",
-          "microphonePermission": "Allow WHATZ IT to record the clues and reactions during a round.",
-          "recordAudioAndroid": true,
-          "barcodeScannerEnabled": false
         }
       ],
       [

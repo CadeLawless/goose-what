@@ -1,5 +1,4 @@
 import { setAudioModeAsync } from 'expo-audio';
-import { Camera, CameraView } from 'expo-camera';
 import {
   createContext,
   type PropsWithChildren,
@@ -10,7 +9,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { Platform, StyleSheet } from 'react-native';
+import { Platform } from 'react-native';
 
 import { getDeckById } from '@/data/decks';
 import { initialRoundState, roundReducer } from '@/game/game-reducer';
@@ -18,6 +17,11 @@ import type { CardOutcome, RoundState } from '@/game/game-types';
 import { clampRoundDuration } from '@/game/round-duration';
 import { shuffle } from '@/game/shuffle';
 import { getSessionCardPool } from '@/game/session-card-memory';
+import {
+  requestRoundCameraPermissions,
+  RoundCamera,
+  type RoundCameraRef,
+} from '@/video/round-camera';
 import {
   storeRoundVideo,
   type RoundVideo,
@@ -36,7 +40,7 @@ type RoundContextValue = {
   resetRound: () => void;
   currentVideo: RoundVideo | null;
   prepareRecording: () => Promise<RecordingPreparation>;
-  startRecording: () => boolean;
+  startRecording: () => Promise<boolean>;
   recordOverlayEvent: (event: Omit<RoundVideoEvent, 'atMs'>) => void;
   stopRecording: () => Promise<RoundVideo | null>;
   cancelRecording: () => Promise<void>;
@@ -49,12 +53,12 @@ export function RoundProvider({ children }: PropsWithChildren) {
   const [cameraEnabled, setCameraEnabled] = useState(false);
   const [currentVideo, setCurrentVideo] = useState<RoundVideo | null>(null);
   const seenCardsByDeck = useRef(new Map<string, Set<string>>());
-  const cameraRef = useRef<CameraView>(null);
+  const cameraRef = useRef<RoundCameraRef>(null);
   const cameraReady = useRef(false);
   const cameraReadyResolver = useRef<((ready: boolean) => void) | null>(null);
   const recordingCancelled = useRef(false);
   const preparationPromise = useRef<Promise<RecordingPreparation> | null>(null);
-  const recordingPromise = useRef<ReturnType<CameraView['recordAsync']> | null>(null);
+  const recordingActive = useRef(false);
   const stoppingPromise = useRef<Promise<RoundVideo | null> | null>(null);
   const recordingStartedAt = useRef<number | null>(null);
   const recordingEvents = useRef<RoundVideoEvent[]>([]);
@@ -67,7 +71,7 @@ export function RoundProvider({ children }: PropsWithChildren) {
   };
 
   const recordOverlayEvent = useCallback((event: Omit<RoundVideoEvent, 'atMs'>) => {
-    if (recordingStartedAt.current === null || !recordingPromise.current) return;
+    if (recordingStartedAt.current === null || !recordingActive.current) return;
     const atMs = Math.max(0, Date.now() - recordingStartedAt.current);
     const previous = recordingEvents.current.at(-1);
     if (previous?.kind === event.kind && previous.text === event.text) return;
@@ -82,20 +86,9 @@ export function RoundProvider({ children }: PropsWithChildren) {
     if (preparationPromise.current) return preparationPromise.current;
 
     preparationPromise.current = (async () => {
-      const cameraPermission = await Camera.requestCameraPermissionsAsync();
+      const permissionsGranted = await requestRoundCameraPermissions();
       if (recordingCancelled.current) return 'unavailable' as const;
-      if (!cameraPermission.granted) return 'permission-denied' as const;
-
-      const microphonePermission = await Camera.requestMicrophonePermissionsAsync();
-      if (recordingCancelled.current) return 'unavailable' as const;
-      if (!microphonePermission.granted) return 'permission-denied' as const;
-
-      await setAudioModeAsync({
-        allowsRecording: true,
-        interruptionMode: 'doNotMix',
-        playsInSilentMode: true,
-        shouldRouteThroughEarpiece: false,
-      });
+      if (!permissionsGranted) return 'permission-denied' as const;
 
       setCameraEnabled(true);
       if (cameraReady.current) return 'ready' as const;
@@ -115,18 +108,19 @@ export function RoundProvider({ children }: PropsWithChildren) {
     return preparationPromise.current;
   }, []);
 
-  const startRecording = useCallback(() => {
-    if (!cameraReady.current || !cameraRef.current || recordingPromise.current) return false;
+  const startRecording = useCallback(async () => {
+    if (!cameraReady.current || !cameraRef.current || recordingActive.current) return false;
+    const started = await cameraRef.current.startRecording(round.durationSeconds + 30);
+    if (!started) return false;
     recordingEvents.current = [];
     recordingStartedAt.current = Date.now();
-    recordingPromise.current = cameraRef.current.recordAsync({
-      maxDuration: round.durationSeconds + 30,
-    });
+    recordingActive.current = true;
     return true;
   }, [round.durationSeconds]);
 
   const finishCameraSession = useCallback(() => {
     cameraReady.current = false;
+    recordingActive.current = false;
     recordingStartedAt.current = null;
     setCameraEnabled(false);
     setAudioModeAsync({
@@ -139,25 +133,22 @@ export function RoundProvider({ children }: PropsWithChildren) {
 
   const stopRecording = useCallback(async () => {
     if (stoppingPromise.current) return stoppingPromise.current;
-    if (!recordingPromise.current || !round.deckId) {
+    if (!recordingActive.current || !round.deckId) {
       finishCameraSession();
       return currentVideo;
     }
-    const pendingRecording = recordingPromise.current;
     const deckId = round.deckId;
     const events = [...recordingEvents.current];
     stoppingPromise.current = (async () => {
-      cameraRef.current?.stopRecording();
       try {
-        const result = await pendingRecording;
-        if (!result?.uri) return null;
-        const video = await storeRoundVideo(result.uri, deckId, events);
+        const uri = await cameraRef.current?.stopRecording();
+        if (!uri) return null;
+        const video = await storeRoundVideo(uri, deckId, events);
         setCurrentVideo(video);
         return video;
       } catch {
         return null;
       } finally {
-        recordingPromise.current = null;
         stoppingPromise.current = null;
         recordingEvents.current = [];
         finishCameraSession();
@@ -170,23 +161,15 @@ export function RoundProvider({ children }: PropsWithChildren) {
     recordingCancelled.current = true;
     cameraReadyResolver.current?.(false);
     cameraReadyResolver.current = null;
-    const pendingRecording = recordingPromise.current;
-    if (!pendingRecording) {
+    if (!recordingActive.current) {
       finishCameraSession();
       return;
     }
-    cameraRef.current?.stopRecording();
     try {
-      const result = await pendingRecording;
-      if (result?.uri) {
-        const { File } = await import('expo-file-system');
-        const temporaryFile = new File(result.uri);
-        if (temporaryFile.exists) temporaryFile.delete();
-      }
+      await cameraRef.current?.cancelRecording();
     } catch {
       // Nothing needs cleaning up when the native recorder did not produce a file.
     } finally {
-      recordingPromise.current = null;
       recordingEvents.current = [];
       finishCameraSession();
     }
@@ -267,29 +250,21 @@ export function RoundProvider({ children }: PropsWithChildren) {
 
   return (
     <RoundContext.Provider value={value}>
-      {cameraEnabled && (
-        <CameraView
-          active
-          facing="front"
-          mirror
-          mode="video"
-          mute={false}
-          onCameraReady={() => {
+      <RoundCamera
+        enabled={cameraEnabled}
+        onReady={() => {
             cameraReady.current = true;
             cameraReadyResolver.current?.(true);
             cameraReadyResolver.current = null;
-          }}
-          onMountError={() => {
+        }}
+        onError={() => {
             cameraReady.current = false;
             setCameraEnabled(false);
             cameraReadyResolver.current?.(false);
             cameraReadyResolver.current = null;
-          }}
-          pointerEvents="none"
-          ref={cameraRef}
-          style={styles.cameraHost}
-        />
-      )}
+        }}
+        ref={cameraRef}
+      />
       {children}
     </RoundContext.Provider>
   );
@@ -300,13 +275,3 @@ export function useRound() {
   if (!context) throw new Error('useRound must be used inside RoundProvider');
   return context;
 }
-
-const styles = StyleSheet.create({
-  cameraHost: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-  },
-});

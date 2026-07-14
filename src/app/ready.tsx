@@ -75,8 +75,8 @@ export default function ReadyScreen() {
     if (!positionReady || !orientationSettled || !recordingPrepared || isLeaving || introStarted.current) return;
     introStarted.current = true;
     replaySound(getReadyPlayer);
-    const timeout = setTimeout(() => {
-      const started = startRecording();
+    const timeout = setTimeout(async () => {
+      const started = await startRecording();
       if (recordingPreparation === 'ready' && !started) {
         introStarted.current = false;
         setRecordingPreparation('error');
