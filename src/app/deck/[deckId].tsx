@@ -1,6 +1,7 @@
+import { Image } from 'expo-image';
 import { type Href, Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { captureRef } from 'react-native-view-shot';
 
@@ -15,6 +16,7 @@ import { loadRoundDuration, saveRoundDuration } from '@/storage/preferences';
 import { colors, radius, spacing, typography } from '@/theme';
 
 export default function DeckDetailsScreen() {
+  const { width } = useWindowDimensions();
   const { deckId } = useLocalSearchParams<{ deckId: string }>();
   const deck = getDeckById(deckId);
   const router = useRouter();
@@ -24,6 +26,7 @@ export default function DeckDetailsScreen() {
   const screenRef = useRef<View>(null);
   const isPortrait = usePortraitScreen();
   const { beginTransition, revealTransition } = useScreenshotTransition();
+  const posterWidth = Math.min(156, Math.max(126, width * 0.36));
 
   useEffect(() => {
     loadRoundDuration().then(setDuration);
@@ -87,9 +90,33 @@ export default function DeckDetailsScreen() {
             <Text style={styles.backText}>Back to Decks</Text>
           </Pressable>
 
-          <View style={styles.heroCard}>
-            <Text style={styles.deckTitle}>{deck.title}</Text>
-            <Text style={styles.deckDescription}>{deck.description}</Text>
+          <View style={styles.heroShadow}>
+            <View style={styles.heroCard}>
+              <View style={styles.heroCopy}>
+                <Text style={styles.deckTitle}>{deck.title}</Text>
+                <Text style={styles.deckDescription}>{deck.description}</Text>
+              </View>
+
+              <View
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+                style={[
+                  styles.poster,
+                  {
+                    width: posterWidth,
+                    right: -posterWidth * 0.22,
+                  },
+                ]}
+              >
+                {deck.coverImage ? (
+                  <Image contentFit="cover" source={deck.coverImage} style={styles.posterImage} />
+                ) : (
+                  <View style={styles.posterFallback}>
+                    <Text style={styles.posterFallbackText}>{deck.title}</Text>
+                  </View>
+                )}
+              </View>
+            </View>
           </View>
 
           <Text style={styles.sectionLabel}>ROUND LENGTH</Text>
@@ -149,13 +176,9 @@ const styles = StyleSheet.create({
   backButtonPressed: { opacity: 0.7, transform: [{ scale: 0.98 }] },
   backChevron: { color: '#000000', fontSize: 35, lineHeight: 38, fontWeight: '300' },
   backText: { color: '#000000', fontSize: 17, fontWeight: '500', marginLeft: 2 },
-  heroCard: {
-    minHeight: 166,
+  heroShadow: {
     borderRadius: radius.xl,
-    padding: spacing.xl,
     marginTop: spacing.xl,
-    alignItems: 'center',
-    justifyContent: 'center',
     backgroundColor: colors.play,
     shadowColor: '#64748B',
     shadowOffset: { width: 0, height: 7 },
@@ -163,12 +186,25 @@ const styles = StyleSheet.create({
     shadowRadius: 13,
     elevation: 6,
   },
+  heroCard: {
+    minHeight: 236,
+    borderRadius: radius.xl,
+    padding: spacing.xl,
+    justifyContent: 'center',
+    overflow: 'hidden',
+    backgroundColor: colors.play,
+  },
+  heroCopy: {
+    width: '59%',
+    alignItems: 'flex-start',
+    zIndex: 1,
+  },
   deckTitle: {
     color: colors.white,
-    fontSize: 35,
-    lineHeight: 40,
+    fontSize: 32,
+    lineHeight: 36,
     fontWeight: '900',
-    textAlign: 'center',
+    textAlign: 'left',
     textTransform: 'uppercase',
   },
   deckDescription: {
@@ -176,9 +212,38 @@ const styles = StyleSheet.create({
     fontSize: 17,
     lineHeight: 24,
     fontWeight: '400',
-    textAlign: 'center',
+    textAlign: 'left',
     marginTop: spacing.md,
-    maxWidth: 420,
+  },
+  poster: {
+    position: 'absolute',
+    top: 12,
+    aspectRatio: 2 / 3,
+    borderRadius: 7,
+    overflow: 'hidden',
+    backgroundColor: colors.surface,
+    shadowColor: '#000000',
+    shadowOffset: { width: -5, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 9,
+    elevation: 9,
+    transform: [{ rotate: '5deg' }],
+  },
+  posterImage: { width: '100%', height: '100%' },
+  posterFallback: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.md,
+    backgroundColor: colors.playSoft,
+  },
+  posterFallbackText: {
+    color: colors.ink,
+    fontSize: 16,
+    lineHeight: 20,
+    fontWeight: '900',
+    textAlign: 'center',
+    textTransform: 'uppercase',
   },
   sectionLabel: {
     color: colors.play,
