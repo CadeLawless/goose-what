@@ -251,13 +251,6 @@ export default function GameScreen() {
               </View>
             )}
 
-            {round.status === 'ready' && (
-              <View style={styles.setupOverlay}>
-                <Text style={styles.setupTitle}>HOLD STEADY</Text>
-                <Text style={styles.setupText}>{getTiltStatusLabel(tiltStatus)}</Text>
-              </View>
-            )}
-
             {round.status === 'finished' && (
               <View style={styles.transitionOverlay}>
                 <Text style={styles.finishTitle}>TIME&apos;S UP!</Text>
@@ -327,21 +320,6 @@ function getCardFontSize(text: string, width: number, height: number) {
   return Math.round(Math.min(lengthSize, viewportSize));
 }
 
-function getTiltStatusLabel(status: ReturnType<typeof useTiltControls>) {
-  switch (status) {
-    case 'checking':
-      return 'CHECKING MOTION';
-    case 'calibrating':
-      return 'HOLD STEADY · CALIBRATING';
-    case 'ready':
-      return 'TILT CONTROLS READY';
-    case 'denied':
-      return 'MOTION DENIED · USE BUTTONS';
-    case 'unavailable':
-      return 'BUTTON CONTROLS';
-  }
-}
-
 const styles = StyleSheet.create({
   captureRoot: { flex: 1, backgroundColor: colors.playSoft },
   safeArea: {
@@ -378,12 +356,13 @@ const styles = StyleSheet.create({
   finishButtonPressed: { opacity: 0.7, transform: [{ scale: 0.98 }] },
   finishButtonText: { color: colors.ink, fontSize: 10, fontWeight: '900', letterSpacing: 1.1 },
   deckName: {
-    width: 190,
-    color: '#000000',
+    position: 'absolute',
+    top: 23,
+    right: 28,
     fontSize: 18,
     fontWeight: '400',
-    textAlign: 'right',
     textTransform: 'uppercase',
+    color: '#000000',
   },
   timerPill: {
     flexDirection: 'row',
@@ -466,22 +445,6 @@ const styles = StyleSheet.create({
   feedbackIcon: { color: '#000000', fontSize: 124, fontWeight: '700', lineHeight: 130 },
   feedbackText: { color: '#000000', fontSize: 42, fontWeight: '500', letterSpacing: 0.5 },
   passFeedbackText: { color: colors.white },
-  setupOverlay: {
-    ...StyleSheet.absoluteFill,
-    zIndex: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.surface,
-  },
-  setupIcon: { color: colors.ink, fontSize: 72, lineHeight: 80, fontWeight: '700' },
-  setupTitle: { ...typography.title, color: colors.play, marginTop: spacing.sm },
-  setupText: {
-    color: colors.play,
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 1.3,
-    marginTop: spacing.sm,
-  },
   transitionOverlay: {
     ...StyleSheet.absoluteFill,
     zIndex: 30,
