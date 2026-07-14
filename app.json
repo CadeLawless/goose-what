@@ -4,11 +4,11 @@
     "slug": "whatz-it",
     "version": "0.1.0",
     "orientation": "default",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/whatz-it-app-icon.png",
     "scheme": "whatzit",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon",
+      "icon": "./assets/images/whatz-it-app-icon.png",
       "bundleIdentifier": "com.cadelawless.whatzit",
       "supportsTablet": true,
       "requireFullScreen": true,
@@ -20,11 +20,11 @@
     },
     "android": {
       "package": "com.cadelawless.whatzit",
+      "icon": "./assets/images/whatz-it-app-icon.png",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#000000",
+        "foregroundImage": "./assets/images/whatz-it-adaptive-foreground.png",
+        "monochromeImage": "./assets/images/whatz-it-adaptive-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
