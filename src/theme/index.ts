@@ -12,7 +12,7 @@ export const colors = {
   playSoft: '#9AE3FF',
   correct: '#AEE666',
   correctBorder: '#7BC61B',
-  pass: '#F56F14',
+  pass: '#f56f14',
   passBorder: '#FEAB39',
   white: '#FFFFFF',
 } as const;
