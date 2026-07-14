@@ -5,9 +5,9 @@ import { useMemo, useState } from 'react';
 import {
   Modal,
   Pressable,
+  type StyleProp,
   StyleSheet,
   Text,
-  type StyleProp,
   View,
   type ViewStyle,
 } from 'react-native';
@@ -99,7 +99,7 @@ export function RoundVideoPlayer({ video, style }: RoundVideoPlayerProps) {
             onPress={closeExpanded}
             style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}
           >
-            <Text style={styles.closeText}>X</Text>
+            <Text style={styles.closeText}>×</Text>
           </Pressable>
         </SafeAreaView>
       </Modal>
@@ -222,8 +222,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.62)',
     zIndex: 20,
-    elevation: 20,
+    elevation: 20
   },
-  closeText: { color: colors.white, fontSize: 20, lineHeight: 24, fontWeight: '900' },
+  closeText: { color: colors.white, fontSize: 40, fontWeight: '900' },
   pressed: { opacity: 0.7, transform: [{ scale: 0.96 }] },
 });
