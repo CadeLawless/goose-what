@@ -158,10 +158,13 @@ export default function DeckLibraryScreen() {
                         {deck?.title ?? 'Round video'}
                       </Text>
                       <Text style={styles.videoDate}>
-                        {new Date(video.createdAt).toLocaleDateString(undefined, {
+                        {new Date(video.createdAt).toLocaleString(undefined, {
                           month: 'short',
                           day: 'numeric',
                           year: 'numeric',
+                          hour: 'numeric',
+                          minute: '2-digit',
+                          timeZoneName: 'short',
                         })}
                       </Text>
                       <View style={styles.videoActions}>
