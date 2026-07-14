@@ -1,0 +1,22 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.whatzit.videoexport'
+version = '0.1.0'
+
+android {
+  namespace 'com.whatzit.videoexport'
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+  }
+}
+
+dependencies {
+  // Expo SDK 57's audio and video modules use Media3 1.9.0. Keep one Media3
+  // version throughout the app so Gradle does not upgrade their runtime APIs.
+  implementation 'androidx.media3:media3-transformer:1.9.0'
+  implementation 'androidx.media3:media3-effect:1.9.0'
+}

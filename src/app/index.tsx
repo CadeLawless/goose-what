@@ -62,13 +62,14 @@ export default function DeckLibraryScreen() {
     if (savingVideoId) return;
     setSavingVideoId(video.id);
     try {
-      await saveRoundVideoToDevice(video.uri);
+      await saveRoundVideoToDevice(video);
       Alert.alert(
         'Video saved',
-        'The round video is now in your device library. The in-app card overlay is not included yet.',
+        'The round video, its sound, and the card overlay are now in your device library.',
       );
-    } catch {
-      Alert.alert('Could not save video', 'Please allow photo library access and try again.');
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Please try again.';
+      Alert.alert('Could not save video', detail);
     } finally {
       setSavingVideoId(null);
     }
@@ -171,7 +172,7 @@ export default function DeckLibraryScreen() {
                           style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
                         >
                           <Text style={styles.saveButtonText}>
-                            {savingVideoId === video.id ? 'SAVING…' : 'SAVE'}
+                            {savingVideoId === video.id ? 'EXPORTING…' : 'SAVE'}
                           </Text>
                         </Pressable>
                         <Pressable

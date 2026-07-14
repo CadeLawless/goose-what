@@ -73,13 +73,14 @@ export default function ResultsScreen() {
     if (!currentVideo || isSavingVideo) return;
     setIsSavingVideo(true);
     try {
-      await saveRoundVideoToDevice(currentVideo.uri);
+      await saveRoundVideoToDevice(currentVideo);
       Alert.alert(
         'Video saved',
-        'The round video is now in your device library. The in-app card overlay is not included yet.',
+        'The round video, its sound, and the card overlay are now in your device library.',
       );
-    } catch {
-      Alert.alert('Could not save video', 'Please allow photo library access and try again.');
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Please try again.';
+      Alert.alert('Could not save video', detail);
     } finally {
       setIsSavingVideo(false);
     }
@@ -112,7 +113,7 @@ export default function ResultsScreen() {
                   style={({ pressed }) => [styles.saveVideoButton, pressed && styles.pressed]}
                 >
                   <Text style={styles.saveVideoText}>
-                    {isSavingVideo ? 'SAVING…' : 'SAVE VIDEO'}
+                    {isSavingVideo ? 'EXPORTING…' : 'SAVE VIDEO'}
                   </Text>
                 </Pressable>
               </View>

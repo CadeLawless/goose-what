@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["WhatzItVideoExportModule"]
+  },
+  "android": {
+    "modules": ["com.whatzit.videoexport.WhatzItVideoExportModule"]
+  }
+}

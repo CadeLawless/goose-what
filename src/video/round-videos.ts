@@ -88,10 +88,23 @@ export async function deleteRoundVideo(id: string) {
   return next;
 }
 
-export async function saveRoundVideoToDevice(uri: string) {
+export async function saveRoundVideoToDevice(video: RoundVideo) {
   if (Platform.OS === 'web') throw new Error('Saving videos is only available on a device.');
   const { Asset, requestPermissionsAsync } = await import('expo-media-library');
   const permission = await requestPermissionsAsync(true, ['video']);
   if (!permission.granted) throw new Error('Media library permission was not granted.');
-  await Asset.create(uri);
+  let exportUri = video.uri;
+  try {
+    if (video.events?.length) {
+      const { exportOverlayVideo } = await import('whatz-it-video-export');
+      exportUri = await exportOverlayVideo(video.uri, video.events);
+    }
+    await Asset.create(exportUri);
+  } finally {
+    if (exportUri !== video.uri) {
+      const { File } = await import('expo-file-system');
+      const exportedFile = new File(exportUri);
+      if (exportedFile.exists) exportedFile.delete();
+    }
+  }
 }

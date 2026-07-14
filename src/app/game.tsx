@@ -45,7 +45,15 @@ export default function GameScreen() {
   const roundEndPlayer = useAudioPlayer(require('../../assets/sounds/round-end.wav'));
   const router = useRouter();
   const { beginTransition } = useScreenshotTransition();
-  const { round, answerCard, advanceCard, finishRound, startRound, stopRecording } = useRound();
+  const {
+    round,
+    answerCard,
+    advanceCard,
+    finishRound,
+    recordOverlayEvent,
+    startRound,
+    stopRecording,
+  } = useRound();
   const stopRecordingRef = useRef(stopRecording);
   const deck = getDeckById(round.deckId ?? undefined);
   const currentCardId = round.cardOrder[round.currentCardIndex];
@@ -125,6 +133,20 @@ export default function GameScreen() {
     const timeout = setTimeout(advanceCard, 550);
     return () => clearTimeout(timeout);
   }, [advanceCard, round.status, tiltStatus]);
+
+  useEffect(() => {
+    if (!currentCard) return;
+    if (round.status === 'playing') {
+      recordOverlayEvent({ kind: 'card', text: currentCard.text });
+    } else if (round.status === 'feedback' && round.latestOutcome) {
+      recordOverlayEvent({
+        kind: round.latestOutcome,
+        text: round.latestOutcome === 'correct' ? 'CORRECT!' : 'PASS!',
+      });
+    } else if (round.status === 'finished') {
+      recordOverlayEvent({ kind: 'times-up', text: "TIME'S UP!" });
+    }
+  }, [currentCard, recordOverlayEvent, round.latestOutcome, round.status]);
 
   useEffect(() => {
     if (round.status !== 'finished') return;
