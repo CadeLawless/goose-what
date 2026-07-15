@@ -10,6 +10,7 @@ export type RoundVideo = {
   uri: string;
   audioUri?: string;
   exportUri?: string;
+  exportIncludesOverlays?: boolean;
   exportStatus?: 'preparing' | 'ready' | 'failed';
   deckId: string;
   createdAt: number;
@@ -52,11 +53,21 @@ export async function loadRoundVideos() {
     .filter((video) => new File(video.uri).exists)
     .map((video) => {
       const audioUri = video.audioUri && new File(video.audioUri).exists ? video.audioUri : undefined;
-      const exportUri = video.exportUri && new File(video.exportUri).exists ? video.exportUri : undefined;
+      let exportUri = video.exportUri && new File(video.exportUri).exists ? video.exportUri : undefined;
+      const hasLegacyIosOverlayExport =
+        Platform.OS === 'ios' &&
+        !!exportUri &&
+        !!video.events?.length &&
+        video.exportIncludesOverlays === undefined;
+      if (hasLegacyIosOverlayExport && exportUri) {
+        new File(exportUri).delete();
+        exportUri = undefined;
+      }
       return {
         ...video,
         audioUri,
         exportUri,
+        exportIncludesOverlays: exportUri ? video.exportIncludesOverlays : undefined,
         exportStatus: exportUri
           ? ('ready' as const)
           : video.events?.length
@@ -164,14 +175,25 @@ async function prepareRoundVideoExportOnce(video: RoundVideo): Promise<RoundVide
     return updateStoredVideo({ ...video, exportStatus: 'ready' });
   }
 
-  await updateStoredVideo({ ...video, exportUri: undefined, exportStatus: 'preparing' });
+  await updateStoredVideo({
+    ...video,
+    exportUri: undefined,
+    exportIncludesOverlays: undefined,
+    exportStatus: 'preparing',
+  });
   let temporaryExportUri: string | undefined;
   try {
-    const { exportOverlayVideo } = await import('whatz-it-video-export');
+    const { exportOverlayVideo, supportsFixedIosOverlayExport } =
+      await import('whatz-it-video-export');
+    // Existing iOS development builds contain an overlay animation that leaves every
+    // prior card visible. Export clean video plus audio until the corrected native
+    // exporter arrives in the eventual production build.
+    const exportEvents =
+      Platform.OS === 'ios' && !supportsFixedIosOverlayExport() ? [] : video.events;
     temporaryExportUri = await exportOverlayVideo(
       video.uri,
       video.audioUri ?? null,
-      video.events,
+      exportEvents,
     );
     const videoDirectory = new Directory(Paths.document, VIDEO_DIRECTORY_NAME);
     videoDirectory.create({ idempotent: true, intermediates: true });
@@ -181,10 +203,16 @@ async function prepareRoundVideoExportOnce(video: RoundVideo): Promise<RoundVide
     return updateStoredVideo({
       ...video,
       exportUri: destination.uri,
+      exportIncludesOverlays: exportEvents.length > 0,
       exportStatus: 'ready',
     });
   } catch {
-    return updateStoredVideo({ ...video, exportUri: undefined, exportStatus: 'failed' });
+    return updateStoredVideo({
+      ...video,
+      exportUri: undefined,
+      exportIncludesOverlays: undefined,
+      exportStatus: 'failed',
+    });
   } finally {
     if (temporaryExportUri) {
       const temporaryFile = new File(temporaryExportUri);

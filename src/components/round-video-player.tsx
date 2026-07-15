@@ -1,8 +1,8 @@
 import { useEventListener } from 'expo';
-import { setAudioModeAsync, useAudioPlayer } from 'expo-audio';
+import { type AudioPlayer, setAudioModeAsync, useAudioPlayer } from 'expo-audio';
 import { StatusBar } from 'expo-status-bar';
 import { useVideoPlayer, type VideoPlayer, VideoView } from 'expo-video';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   Modal,
   Pressable,
@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { LandscapeViewport } from '@/components/landscape-viewport';
 import { colors, radius, spacing } from '@/theme';
 import type { RoundVideo, RoundVideoEvent } from '@/video/round-videos';
 
@@ -39,8 +40,10 @@ export function RoundVideoPlayer({
   const expandedRef = useRef(false);
   const previousVideoTime = useRef(0);
   const [currentTime, setCurrentTime] = useState(0);
-  const separateAudio = useAudioPlayer(video.audioUri ?? null);
-  const player = useVideoPlayer(video.uri, (instance) => {
+  const playbackUri = video.exportUri ?? video.uri;
+  const separateAudioUri = video.exportUri ? undefined : video.audioUri;
+  const separateAudio = useAudioPlayer(separateAudioUri ?? null);
+  const player = useVideoPlayer(playbackUri, (instance) => {
     instance.loop = true;
     instance.muted = true;
     instance.timeUpdateEventInterval = 0.1;
@@ -49,7 +52,7 @@ export function RoundVideoPlayer({
 
   useEventListener(player, 'timeUpdate', ({ currentTime: nextTime }) => {
     setCurrentTime(nextTime);
-    if (!expandedRef.current || !video.audioUri) return;
+    if (!expandedRef.current || !separateAudioUri) return;
     const looped = nextTime + 0.5 < previousVideoTime.current;
     previousVideoTime.current = nextTime;
     const drift = Math.abs(separateAudio.currentTime - nextTime);
@@ -64,17 +67,13 @@ export function RoundVideoPlayer({
   });
 
   useEventListener(player, 'playingChange', ({ isPlaying }) => {
-    if (!expandedRef.current || !video.audioUri) return;
+    if (!expandedRef.current || !separateAudioUri) return;
     if (isPlaying) {
       void separateAudio.seekTo(player.currentTime).then(() => separateAudio.play()).catch(() => undefined);
     } else {
-      separateAudio.pause();
+      pauseAudioPlayer(separateAudio);
     }
   });
-
-  useEffect(() => {
-    return () => separateAudio.pause();
-  }, [separateAudio]);
 
   const event = useMemo(
     () => getEventAtTime(video.events ?? [], currentTime * 1000),
@@ -86,7 +85,7 @@ export function RoundVideoPlayer({
     previousVideoTime.current = player.currentTime;
     setExpanded(true);
     await setPlaybackAudioMode().catch(() => undefined);
-    if (video.audioUri) {
+    if (separateAudioUri) {
       setPlayerMuted(player, true);
       await separateAudio.seekTo(player.currentTime).catch(() => undefined);
       separateAudio.play();
@@ -98,7 +97,7 @@ export function RoundVideoPlayer({
 
   const closeExpanded = () => {
     expandedRef.current = false;
-    separateAudio.pause();
+    pauseAudioPlayer(separateAudio);
     setPlayerMuted(player, true);
     player.play();
     setExpanded(false);
@@ -122,7 +121,7 @@ export function RoundVideoPlayer({
             style={StyleSheet.absoluteFill}
             surfaceType="textureView"
           />
-          <PlaybackOverlay event={event} compact />
+          {!video.exportIncludesOverlays && <PlaybackOverlay event={event} compact />}
           <Pressable
             accessibilityHint="Opens a larger player with sound"
             accessibilityLabel="Watch round video"
@@ -140,7 +139,8 @@ export function RoundVideoPlayer({
         supportedOrientations={['portrait', 'landscape', 'landscape-left', 'landscape-right']}
         visible={expanded}
       >
-        <View style={styles.modalRoot}>
+        <LandscapeViewport>
+          <View style={styles.modalRoot}>
           <StatusBar hidden animated={false} />
           <View style={styles.expandedFrame}>
             <VideoView
@@ -150,7 +150,7 @@ export function RoundVideoPlayer({
               style={StyleSheet.absoluteFill}
               surfaceType="textureView"
             />
-            <PlaybackOverlay event={event} />
+            {!video.exportIncludesOverlays && <PlaybackOverlay event={event} />}
           </View>
           {(onSave || onDelete) && (
             <View
@@ -206,7 +206,8 @@ export function RoundVideoPlayer({
           >
             <Text style={styles.closeText}>×</Text>
           </Pressable>
-        </View>
+          </View>
+        </LandscapeViewport>
       </Modal>
     </>
   );
@@ -214,6 +215,14 @@ export function RoundVideoPlayer({
 
 function setPlayerMuted(player: VideoPlayer, muted: boolean) {
   player.muted = muted;
+}
+
+function pauseAudioPlayer(player: AudioPlayer) {
+  try {
+    player.pause();
+  } catch {
+    // The hook may have already released its native player while the view unmounts.
+  }
 }
 
 function enablePlayerAudio(player: VideoPlayer) {
@@ -283,14 +292,14 @@ function PlaybackOverlay({ event, compact = false }: { event?: RoundVideoEvent; 
 function getEventPalette(kind: RoundVideoEvent['kind']) {
   switch (kind) {
     case 'correct':
-      return { background: 'rgba(135, 237, 170, 0.78)', foreground: colors.ink };
+      return { background: 'rgba(135, 237, 170, 0.64)', foreground: colors.ink };
     case 'passed':
-      return { background: 'rgba(255, 119, 43, 0.78)', foreground: colors.passText };
+      return { background: 'rgba(255, 119, 43, 0.64)', foreground: colors.passText };
     case 'times-up':
     case 'countdown':
-      return { background: 'rgba(50, 139, 232, 0.78)', foreground: colors.white };
+      return { background: 'rgba(50, 139, 232, 0.64)', foreground: colors.white };
     case 'card':
-      return { background: 'rgba(247, 245, 239, 0.78)', foreground: colors.play };
+      return { background: 'rgba(247, 245, 239, 0.64)', foreground: colors.play };
   }
 }
 

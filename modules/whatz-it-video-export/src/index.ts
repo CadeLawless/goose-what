@@ -12,6 +12,7 @@ export type RoundAudioCue = {
 };
 
 type WhatzItVideoExportNativeModule = {
+  overlayExportVersion?: number;
   exportOverlayVideo(
     inputUri: string,
     audioUri: string | null,
@@ -31,6 +32,10 @@ type WhatzItVideoExportNativeModule = {
 };
 
 const nativeModule = requireNativeModule<WhatzItVideoExportNativeModule>('WhatzItVideoExport');
+
+export function supportsFixedIosOverlayExport() {
+  return nativeModule.overlayExportVersion === 2;
+}
 
 export function exportOverlayVideo(
   inputUri: string,

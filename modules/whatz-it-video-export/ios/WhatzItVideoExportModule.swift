@@ -56,6 +56,10 @@ public final class WhatzItVideoExportModule: Module {
   public func definition() -> ModuleDefinition {
     Name("WhatzItVideoExport")
 
+    Constant("overlayExportVersion") {
+      2
+    }
+
     AsyncFunction("exportOverlayVideo") {
       (inputUrl: URL, audioUrl: URL?, events: [VideoOverlayEventRecord]) async throws -> String in
       let outputUrl = FileManager.default.temporaryDirectory
@@ -436,9 +440,9 @@ public final class WhatzItVideoExportModule: Module {
     let visibility = CAKeyframeAnimation(keyPath: "opacity")
     visibility.beginTime = AVCoreAnimationBeginTimeAtZero + start
     visibility.duration = duration
-    visibility.values = [1, 1]
-    visibility.keyTimes = [0, 1]
-    visibility.fillMode = .forwards
+    visibility.values = [0, 1, 1, 0]
+    visibility.keyTimes = [0, 0.001, 0.999, 1]
+    visibility.fillMode = .both
     visibility.isRemovedOnCompletion = false
     container.add(visibility, forKey: "visibility")
     return container
@@ -498,22 +502,22 @@ public final class WhatzItVideoExportModule: Module {
     switch kind {
     case "correct":
       return (
-        UIColor(red: 135 / 255, green: 237 / 255, blue: 170 / 255, alpha: 0.78),
+        UIColor(red: 135 / 255, green: 237 / 255, blue: 170 / 255, alpha: 0.64),
         UIColor(red: 34 / 255, green: 45 / 255, blue: 58 / 255, alpha: 1)
       )
     case "passed":
       return (
-        UIColor(red: 255 / 255, green: 119 / 255, blue: 43 / 255, alpha: 0.78),
+        UIColor(red: 255 / 255, green: 119 / 255, blue: 43 / 255, alpha: 0.64),
         UIColor(red: 82 / 255, green: 38 / 255, blue: 8 / 255, alpha: 1)
       )
     case "countdown", "times-up":
       return (
-        UIColor(red: 50 / 255, green: 139 / 255, blue: 232 / 255, alpha: 0.78),
+        UIColor(red: 50 / 255, green: 139 / 255, blue: 232 / 255, alpha: 0.64),
         .white
       )
     default:
       return (
-        UIColor(red: 247 / 255, green: 245 / 255, blue: 239 / 255, alpha: 0.78),
+        UIColor(red: 247 / 255, green: 245 / 255, blue: 239 / 255, alpha: 0.64),
         UIColor(red: 50 / 255, green: 139 / 255, blue: 232 / 255, alpha: 1)
       )
     }

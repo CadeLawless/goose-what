@@ -44,7 +44,7 @@ async function prepareRoundRecordingAudio() {
   await setAudioModeAsync({
     allowsRecording: true,
     interruptionMode: 'doNotMix',
-    playsInSilentMode: false,
+    playsInSilentMode: true,
     shouldRouteThroughEarpiece: false,
   });
   if (Platform.OS === 'ios') {
