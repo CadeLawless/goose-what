@@ -98,6 +98,11 @@ export function RoundProvider({ children }: PropsWithChildren) {
     });
   }, []);
 
+  const getRecordingTimerEndsAtMs = useCallback((endsAt: number | null) => {
+    if (endsAt === null || recordingStartedAt.current === null) return undefined;
+    return Math.max(0, endsAt - recordingStartedAt.current);
+  }, []);
+
   const prepareRecording = useCallback(() => {
     if (Platform.OS === 'web') return Promise.resolve<RecordingPreparation>('unavailable');
     if (cameraReady.current && cameraRef.current) {
@@ -293,13 +298,22 @@ export function RoundProvider({ children }: PropsWithChildren) {
         rememberCard(round.deckId, cardId);
         const deck = getDeckById(round.deckId ?? undefined);
         const card = deck?.cards.find((candidate) => candidate.id === cardId);
-        if (card) recordOverlayEvent({ kind: 'card', text: card.text });
+        if (card) {
+          recordOverlayEvent({
+            kind: 'card',
+            text: card.text,
+            timerEndsAtMs: getRecordingTimerEndsAtMs(
+              Date.now() + round.durationSeconds * 1000,
+            ),
+          });
+        }
         dispatch({ type: 'START', now: Date.now() });
       },
       answerCard: (outcome) => {
         recordOverlayEvent({
           kind: outcome === 'correct' ? 'correct' : 'passed',
           text: outcome === 'correct' ? 'CORRECT!' : 'PASS',
+          timerEndsAtMs: getRecordingTimerEndsAtMs(round.endsAt),
         });
         dispatch({ type: 'ANSWER', outcome, now: Date.now() });
       },
@@ -309,7 +323,13 @@ export function RoundProvider({ children }: PropsWithChildren) {
           rememberCard(round.deckId, nextCardId);
           const deck = getDeckById(round.deckId ?? undefined);
           const card = deck?.cards.find((candidate) => candidate.id === nextCardId);
-          if (card) recordOverlayEvent({ kind: 'card', text: card.text });
+          if (card) {
+            recordOverlayEvent({
+              kind: 'card',
+              text: card.text,
+              timerEndsAtMs: getRecordingTimerEndsAtMs(round.endsAt),
+            });
+          }
         }
         dispatch({ type: 'ADVANCE' });
       },
@@ -323,6 +343,7 @@ export function RoundProvider({ children }: PropsWithChildren) {
       cancelRecording,
       currentVideo,
       deleteCurrentVideo,
+      getRecordingTimerEndsAtMs,
       prepareRecording,
       recordOverlayEvent,
       recordSoundCue,

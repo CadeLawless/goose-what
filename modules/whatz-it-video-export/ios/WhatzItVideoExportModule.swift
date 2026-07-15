@@ -1,6 +1,7 @@
 import AudioToolbox
 import AVFoundation
 import ExpoModulesCore
+import ImageIO
 import QuartzCore
 import UIKit
 
@@ -8,6 +9,7 @@ struct VideoOverlayEventRecord: Record {
   @Field var atMs: Double = 0
   @Field var kind: String = "card"
   @Field var text: String = ""
+  @Field var timerEndsAtMs: Double? = nil
 }
 
 struct RoundAudioCueRecord: Record {
@@ -60,25 +62,35 @@ public final class WhatzItVideoExportModule: Module {
     Name("WhatzItVideoExport")
 
     Constant("overlayExportVersion") {
-      5
+      6
     }
 
     AsyncFunction("exportOverlayVideo") {
       (inputUrl: URL, audioUrl: URL?, events: [VideoOverlayEventRecord]) async throws -> String in
-      let outputUrl = FileManager.default.temporaryDirectory
-        .appendingPathComponent("whatz-it-overlay-\(UUID().uuidString).mp4")
-      do {
-        try await Self.export(
-          inputUrl: inputUrl,
-          audioUrl: audioUrl,
-          outputUrl: outputUrl,
-          events: events
-        )
-        return outputUrl.absoluteString
-      } catch {
-        try? FileManager.default.removeItem(at: outputUrl)
-        throw error
-      }
+      try await Self.exportToTemporaryFile(
+        inputUrl: inputUrl,
+        audioUrl: audioUrl,
+        events: events,
+        headshotUrl: nil,
+        wordmarkUrl: nil
+      )
+    }
+
+    AsyncFunction("exportBrandedOverlayVideo") {
+      (
+        inputUrl: URL,
+        audioUrl: URL?,
+        events: [VideoOverlayEventRecord],
+        headshotUrl: URL?,
+        wordmarkUrl: URL?
+      ) async throws -> String in
+      try await Self.exportToTemporaryFile(
+        inputUrl: inputUrl,
+        audioUrl: audioUrl,
+        events: events,
+        headshotUrl: headshotUrl,
+        wordmarkUrl: wordmarkUrl
+      )
     }
 
     AsyncFunction("mixRoundAudio") {
@@ -276,11 +288,38 @@ public final class WhatzItVideoExportModule: Module {
     try await run(exporter)
   }
 
+  private static func exportToTemporaryFile(
+    inputUrl: URL,
+    audioUrl: URL?,
+    events: [VideoOverlayEventRecord],
+    headshotUrl: URL?,
+    wordmarkUrl: URL?
+  ) async throws -> String {
+    let outputUrl = FileManager.default.temporaryDirectory
+      .appendingPathComponent("whatz-it-overlay-\(UUID().uuidString).mp4")
+    do {
+      try await export(
+        inputUrl: inputUrl,
+        audioUrl: audioUrl,
+        outputUrl: outputUrl,
+        events: events,
+        headshotUrl: headshotUrl,
+        wordmarkUrl: wordmarkUrl
+      )
+      return outputUrl.absoluteString
+    } catch {
+      try? FileManager.default.removeItem(at: outputUrl)
+      throw error
+    }
+  }
+
   private static func export(
     inputUrl: URL,
     audioUrl: URL?,
     outputUrl: URL,
-    events: [VideoOverlayEventRecord]
+    events: [VideoOverlayEventRecord],
+    headshotUrl: URL?,
+    wordmarkUrl: URL?
   ) async throws {
     let sourceAsset = AVURLAsset(url: inputUrl)
     guard let sourceVideoTrack = try await sourceAsset.loadTracks(withMediaType: .video).first else {
@@ -322,7 +361,9 @@ public final class WhatzItVideoExportModule: Module {
     videoComposition.animationTool = makeAnimationTool(
       renderSize: renderSize,
       events: events,
-      durationSeconds: max(0, duration.seconds)
+      durationSeconds: max(0, duration.seconds),
+      headshot: headshotUrl.flatMap { loadBrandingImage($0) },
+      wordmark: wordmarkUrl.flatMap { loadBrandingImage($0) }
     )
 
     let compatiblePresets = AVAssetExportSession.exportPresets(compatibleWith: videoCompositionAsset)
@@ -459,7 +500,9 @@ public final class WhatzItVideoExportModule: Module {
   private static func makeAnimationTool(
     renderSize: CGSize,
     events: [VideoOverlayEventRecord],
-    durationSeconds: Double
+    durationSeconds: Double,
+    headshot: UIImage?,
+    wordmark: UIImage?
   ) -> AVVideoCompositionCoreAnimationTool {
     let parentLayer = CALayer()
     parentLayer.frame = CGRect(origin: .zero, size: renderSize)
@@ -469,6 +512,14 @@ public final class WhatzItVideoExportModule: Module {
     videoLayer.frame = parentLayer.bounds
     parentLayer.addSublayer(videoLayer)
 
+    if let brandingLayer = makeBrandingLayer(
+      renderSize: renderSize,
+      headshot: headshot,
+      wordmark: wordmark
+    ) {
+      parentLayer.addSublayer(brandingLayer)
+    }
+
     let orderedEvents = events.sorted { $0.atMs < $1.atMs }
     for (index, event) in orderedEvents.enumerated() {
       let start = max(0, event.atMs / 1_000)
@@ -476,12 +527,37 @@ public final class WhatzItVideoExportModule: Module {
         ? max(start, orderedEvents[index + 1].atMs / 1_000)
         : durationSeconds
       guard nextStart > start else { continue }
-      parentLayer.addSublayer(makeOverlayLayer(
-        event: event,
-        renderSize: renderSize,
-        start: start,
-        duration: nextStart - start
-      ))
+      if shouldShowTimer(for: event), let timerEndsAtMs = event.timerEndsAtMs {
+        let timerEndSeconds = timerEndsAtMs / 1_000
+        var segmentStart = start
+        while segmentStart < nextStart {
+          let remainingSeconds = max(0, Int(ceil(timerEndSeconds - segmentStart)))
+          let nextTimerBoundary = remainingSeconds > 0
+            ? timerEndSeconds - Double(remainingSeconds - 1)
+            : nextStart
+          let safeBoundary = nextTimerBoundary > segmentStart
+            ? nextTimerBoundary
+            : segmentStart + (1.0 / 30.0)
+          let segmentEnd = min(nextStart, safeBoundary)
+          guard segmentEnd > segmentStart else { break }
+          parentLayer.addSublayer(makeOverlayLayer(
+            event: event,
+            timerText: formatRoundClock(remainingSeconds),
+            renderSize: renderSize,
+            start: segmentStart,
+            duration: segmentEnd - segmentStart
+          ))
+          segmentStart = segmentEnd
+        }
+      } else {
+        parentLayer.addSublayer(makeOverlayLayer(
+          event: event,
+          timerText: nil,
+          renderSize: renderSize,
+          start: start,
+          duration: nextStart - start
+        ))
+      }
     }
 
     return AVVideoCompositionCoreAnimationTool(
@@ -492,6 +568,7 @@ public final class WhatzItVideoExportModule: Module {
 
   private static func makeOverlayLayer(
     event: VideoOverlayEventRecord,
+    timerText: String?,
     renderSize: CGSize,
     start: Double,
     duration: Double
@@ -511,9 +588,24 @@ public final class WhatzItVideoExportModule: Module {
       font = UIFont.systemFont(ofSize: fontSize, weight: .bold)
       textSize = (text as NSString).size(withAttributes: [.font: font])
     }
-    let width = min(renderSize.width, ceil(textSize.width) + horizontalPadding * 2)
+    let timerFont: UIFont?
+    let timerSize: CGSize
+    if let timerText {
+      let font = UIFont.systemFont(ofSize: renderSize.height * 0.028, weight: .bold)
+      timerFont = font
+      timerSize = (timerText as NSString).size(withAttributes: [.font: font])
+    } else {
+      timerFont = nil
+      timerSize = .zero
+    }
+    let width = min(
+      renderSize.width,
+      ceil(max(textSize.width, timerSize.width)) + horizontalPadding * 2
+    )
     let minimumHeight = renderSize.height * 0.123
-    let height = max(minimumHeight, ceil(font.lineHeight) + verticalPadding * 2)
+    let timerSpacing = timerText == nil ? 0 : renderSize.height * 0.0051
+    let contentHeight = font.lineHeight + (timerFont?.lineHeight ?? 0) + timerSpacing
+    let height = max(minimumHeight, ceil(contentHeight) + verticalPadding * 2)
     let margin = renderSize.height * 0.133
     let container = CALayer()
     container.frame = CGRect(
@@ -525,8 +617,11 @@ public final class WhatzItVideoExportModule: Module {
     container.contents = makeOverlayImage(
       event: event,
       text: text,
+      timerText: timerText,
       size: CGSize(width: width, height: height),
       font: font,
+      timerFont: timerFont,
+      timerSpacing: timerSpacing,
       horizontalPadding: horizontalPadding
     )
     container.contentsGravity = .resize
@@ -546,8 +641,11 @@ public final class WhatzItVideoExportModule: Module {
   private static func makeOverlayImage(
     event: VideoOverlayEventRecord,
     text: String,
+    timerText: String?,
     size: CGSize,
     font: UIFont,
+    timerFont: UIFont?,
+    timerSpacing: CGFloat,
     horizontalPadding: CGFloat
   ) -> CGImage? {
     let format = UIGraphicsImageRendererFormat()
@@ -579,9 +677,12 @@ public final class WhatzItVideoExportModule: Module {
         context: nil
       )
       let textHeight = min(size.height, ceil(measuredText.height))
+      let timerHeight = timerFont.map { ceil($0.lineHeight) } ?? 0
+      let contentHeight = textHeight + timerSpacing + timerHeight
+      let contentTop = (size.height - contentHeight) / 2
       let textRect = CGRect(
         x: horizontalPadding,
-        y: (size.height - textHeight) / 2 - measuredText.minY,
+        y: contentTop - measuredText.minY,
         width: availableTextWidth,
         height: textHeight
       )
@@ -590,8 +691,105 @@ public final class WhatzItVideoExportModule: Module {
         options: [.usesLineFragmentOrigin, .usesFontLeading],
         context: nil
       )
+
+      if let timerText, let timerFont {
+        let timerParagraph = NSMutableParagraphStyle()
+        timerParagraph.alignment = .center
+        timerParagraph.lineBreakMode = .byClipping
+        let attributedTimer = NSAttributedString(
+          string: timerText,
+          attributes: [
+            .font: timerFont,
+            .foregroundColor: palette.foreground,
+            .paragraphStyle: timerParagraph
+          ]
+        )
+        let timerRect = CGRect(
+          x: horizontalPadding,
+          y: contentTop + textHeight + timerSpacing,
+          width: availableTextWidth,
+          height: timerHeight
+        )
+        attributedTimer.draw(
+          with: timerRect,
+          options: [.usesLineFragmentOrigin, .usesFontLeading],
+          context: nil
+        )
+      }
     }
     return image.cgImage
+  }
+
+  private static func shouldShowTimer(for event: VideoOverlayEventRecord) -> Bool {
+    event.kind == "card" || event.kind == "correct" || event.kind == "passed"
+  }
+
+  private static func formatRoundClock(_ totalSeconds: Int) -> String {
+    let safeSeconds = max(0, totalSeconds)
+    return String(format: "%d:%02d", safeSeconds / 60, safeSeconds % 60)
+  }
+
+  private static func loadBrandingImage(_ url: URL) -> UIImage? {
+    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+    let options: [CFString: Any] = [
+      kCGImageSourceCreateThumbnailFromImageAlways: true,
+      kCGImageSourceCreateThumbnailWithTransform: true,
+      kCGImageSourceThumbnailMaxPixelSize: 1_200
+    ]
+    guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+      return nil
+    }
+    return UIImage(cgImage: image)
+  }
+
+  private static func makeBrandingLayer(
+    renderSize: CGSize,
+    headshot: UIImage?,
+    wordmark: UIImage?
+  ) -> CALayer? {
+    guard headshot != nil || wordmark != nil else { return nil }
+    let margin = renderSize.height * 0.035
+    let gap = renderSize.height * 0.01
+    let headshotHeight = headshot == nil ? 0 : renderSize.height * 0.1
+    let headshotWidth = headshot.map {
+      headshotHeight * ($0.size.width / max(1, $0.size.height))
+    } ?? 0
+    let wordmarkWidth = wordmark == nil ? 0 : renderSize.height * 0.2
+    let wordmarkHeight = wordmark.map {
+      wordmarkWidth * ($0.size.height / max(1, $0.size.width))
+    } ?? 0
+    let actualGap = headshot != nil && wordmark != nil ? gap : 0
+    let width = headshotWidth + actualGap + wordmarkWidth
+    let height = max(headshotHeight, wordmarkHeight)
+    let brandingLayer = CALayer()
+    brandingLayer.frame = CGRect(x: margin, y: margin, width: width, height: height)
+    brandingLayer.opacity = 0.92
+
+    if let headshot, let headshotImage = headshot.cgImage {
+      let layer = CALayer()
+      layer.frame = CGRect(
+        x: 0,
+        y: (height - headshotHeight) / 2,
+        width: headshotWidth,
+        height: headshotHeight
+      )
+      layer.contents = headshotImage
+      layer.contentsGravity = .resizeAspect
+      brandingLayer.addSublayer(layer)
+    }
+    if let wordmark, let wordmarkImage = wordmark.cgImage {
+      let layer = CALayer()
+      layer.frame = CGRect(
+        x: headshotWidth + actualGap,
+        y: (height - wordmarkHeight) / 2,
+        width: wordmarkWidth,
+        height: wordmarkHeight
+      )
+      layer.contents = wordmarkImage
+      layer.contentsGravity = .resizeAspect
+      brandingLayer.addSublayer(layer)
+    }
+    return brandingLayer
   }
 
   private static func colors(for kind: String) -> (background: UIColor, foreground: UIColor) {

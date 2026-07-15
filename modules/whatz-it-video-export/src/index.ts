@@ -4,6 +4,7 @@ export type VideoOverlayEvent = {
   atMs: number;
   kind: 'countdown' | 'card' | 'correct' | 'passed' | 'times-up';
   text: string;
+  timerEndsAtMs?: number;
 };
 
 export type RoundAudioCue = {
@@ -17,6 +18,13 @@ type WhatzItVideoExportNativeModule = {
     inputUri: string,
     audioUri: string | null,
     events: VideoOverlayEvent[],
+  ): Promise<string>;
+  exportBrandedOverlayVideo?(
+    inputUri: string,
+    audioUri: string | null,
+    events: VideoOverlayEvent[],
+    headshotUri: string | null,
+    wordmarkUri: string | null,
   ): Promise<string>;
   mixRoundAudio(
     videoUri: string,
@@ -49,8 +57,18 @@ export function exportOverlayVideo(
   inputUri: string,
   audioUri: string | null,
   events: VideoOverlayEvent[],
+  headshotUri: string | null,
+  wordmarkUri: string | null,
 ) {
-  return nativeModule.exportOverlayVideo(inputUri, audioUri, events);
+  return nativeModule.exportBrandedOverlayVideo
+    ? nativeModule.exportBrandedOverlayVideo(
+        inputUri,
+        audioUri,
+        events,
+        headshotUri,
+        wordmarkUri,
+      )
+    : nativeModule.exportOverlayVideo(inputUri, audioUri, events);
 }
 
 export function mixRoundAudio(

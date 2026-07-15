@@ -24,6 +24,7 @@ export type RoundVideoEvent = {
   atMs: number;
   kind: 'countdown' | 'card' | 'correct' | 'passed' | 'times-up';
   text: string;
+  timerEndsAtMs?: number;
 };
 
 type StoredRoundVideo = Omit<RoundVideo, 'uri' | 'audioUri' | 'exportUri'> & {
@@ -275,10 +276,13 @@ async function prepareRoundVideoExportOnce(video: RoundVideo): Promise<RoundVide
         'This installed app build does not contain the reliable audio exporter. Install the updated build, then retry this export.',
       );
     }
+    const branding = await loadExportBrandingUris();
     temporaryExportUri = await exportOverlayVideo(
       video.uri,
       video.audioUri ?? null,
       exportEvents,
+      branding?.headshotUri ?? null,
+      branding?.wordmarkUri ?? null,
     );
     const videoDirectory = new Directory(Paths.document, VIDEO_DIRECTORY_NAME);
     videoDirectory.create({ idempotent: true, intermediates: true });
@@ -326,6 +330,23 @@ async function prepareRoundVideoExportOnce(video: RoundVideo): Promise<RoundVide
       const temporaryFile = new File(temporaryExportUri);
       if (temporaryFile.exists) temporaryFile.delete();
     }
+  }
+}
+
+async function loadExportBrandingUris() {
+  try {
+    const { Asset } = await import('expo-asset');
+    const [headshot, wordmark] = await Asset.loadAsync([
+      require('../../assets/images/branding/albert-headshot.png'),
+      require('../../assets/images/branding/whatz-it-wordmark.png'),
+    ]);
+    return {
+      headshotUri: headshot.localUri ?? headshot.uri,
+      wordmarkUri: wordmark.localUri ?? wordmark.uri,
+    };
+  } catch (error) {
+    warnVideoDiagnostic('export branding assets unavailable', error);
+    return null;
   }
 }
 

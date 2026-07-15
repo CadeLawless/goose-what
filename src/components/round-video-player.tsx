@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ConfirmationPrompt } from '@/components/confirmation-prompt';
 import { LandscapeViewport } from '@/components/landscape-viewport';
+import { formatRoundClock } from '@/game/round-duration';
 import { colors, radius, spacing } from '@/theme';
 import type { RoundVideo, RoundVideoEvent } from '@/video/round-videos';
 import { logVideoDiagnostic } from '@/video/video-diagnostics';
@@ -47,12 +48,11 @@ export function RoundVideoPlayer({
   const [saveNotice, setSaveNotice] = useState<VideoSaveNotice | null>(null);
   // Keep one source for this player's entire mounted lifetime. Replacing the raw
   // recording with its finished export would otherwise restart visible playback.
-  const [playbackSource] = useState(() => getPreferredPlaybackSource(video));
+  const [playbackUri] = useState(() => video.uri);
   const expandedRef = useRef(false);
   const previousVideoTime = useRef(0);
   const [currentTime, setCurrentTime] = useState(0);
-  const playbackUri = playbackSource.uri;
-  const separateAudioUri = playbackSource.isExport ? undefined : video.audioUri;
+  const separateAudioUri = video.audioUri;
   const separateAudio = useAudioPlayer(separateAudioUri ?? null);
   const player = useVideoPlayer(playbackUri, (instance) => {
     instance.loop = true;
@@ -91,7 +91,7 @@ export function RoundVideoPlayer({
       audioTrackCount: availableAudioTracks.length,
       audioTracks: availableAudioTracks,
       exportUri: video.exportUri,
-      playbackIncludesOverlays: playbackSource.includesOverlays,
+      playbackIncludesOverlays: false,
       playbackUri,
       separateAudioUri,
       videoSource,
@@ -150,7 +150,7 @@ export function RoundVideoPlayer({
             style={StyleSheet.absoluteFill}
             surfaceType="textureView"
           />
-          {!playbackSource.includesOverlays && <PlaybackOverlay event={event} compact />}
+          <PlaybackOverlay currentTimeMs={currentTime * 1000} event={event} compact />
           <Pressable
             accessibilityHint="Opens a larger player with sound"
             accessibilityLabel="Watch round video"
@@ -179,7 +179,7 @@ export function RoundVideoPlayer({
               style={StyleSheet.absoluteFill}
               surfaceType="textureView"
             />
-            {!playbackSource.includesOverlays && <PlaybackOverlay event={event} />}
+            <PlaybackOverlay currentTimeMs={currentTime * 1000} event={event} />
           </View>
           {(onSave || onDelete) && (
             <View
@@ -262,16 +262,6 @@ function setPlayerMuted(player: VideoPlayer, muted: boolean) {
   player.muted = muted;
 }
 
-function getPreferredPlaybackSource(video: RoundVideo) {
-  return video.exportUri
-    ? {
-        uri: video.exportUri,
-        isExport: true,
-        includesOverlays: video.exportIncludesOverlays === true,
-      }
-    : { uri: video.uri, isExport: false, includesOverlays: false };
-}
-
 function pauseAudioPlayer(player: AudioPlayer) {
   try {
     player.pause();
@@ -318,10 +308,19 @@ function getEventAtTime(events: RoundVideoEvent[], timeMs: number) {
   return current;
 }
 
-function PlaybackOverlay({ event, compact = false }: { event?: RoundVideoEvent; compact?: boolean }) {
+function PlaybackOverlay({
+  currentTimeMs,
+  event,
+  compact = false,
+}: {
+  currentTimeMs: number;
+  event?: RoundVideoEvent;
+  compact?: boolean;
+}) {
   if (!event) return null;
   const palette = getEventPalette(event.kind);
   const text = event.text.replace(/\s+/g, ' ').trim();
+  const timerText = getOverlayTimerText(event, currentTimeMs);
   return (
     <View pointerEvents="none" style={[styles.overlay, compact && styles.overlayCompact]}>
       <View
@@ -345,9 +344,31 @@ function PlaybackOverlay({ event, compact = false }: { event?: RoundVideoEvent; 
         >
           {text}
         </Text>
+        {timerText && (
+          <Text
+            allowFontScaling={false}
+            style={[
+              styles.overlayTimer,
+              compact && styles.overlayTimerCompact,
+              { color: palette.foreground },
+            ]}
+          >
+            {timerText}
+          </Text>
+        )}
       </View>
     </View>
   );
+}
+
+function getOverlayTimerText(event: RoundVideoEvent, currentTimeMs: number) {
+  if (
+    event.timerEndsAtMs === undefined ||
+    (event.kind !== 'card' && event.kind !== 'correct' && event.kind !== 'passed')
+  ) {
+    return null;
+  }
+  return formatRoundClock(Math.max(0, Math.ceil((event.timerEndsAtMs - currentTimeMs) / 1000)));
 }
 
 function getEventPalette(kind: RoundVideoEvent['kind']) {
@@ -400,6 +421,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   overlayTextCompact: { fontSize: 8, lineHeight: 9 },
+  overlayTimer: { marginTop: 2, fontSize: 12, lineHeight: 14, fontWeight: '800', textAlign: 'center' },
+  overlayTimerCompact: { marginTop: 1, fontSize: 5, lineHeight: 6 },
   closeButton: {
     position: 'absolute',
     right: spacing.lg,
