@@ -236,6 +236,7 @@ export function RoundVideoPlayer({
             <View style={styles.expandedFrame}>
               <VideoView
                 contentFit="contain"
+                fullscreenOptions={{ enable: false }}
                 nativeControls
                 player={player}
                 style={StyleSheet.absoluteFill}
