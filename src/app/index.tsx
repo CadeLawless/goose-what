@@ -3,6 +3,7 @@ import { useFocusEffect } from 'expo-router';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -227,7 +228,14 @@ export default function DeckLibraryScreen() {
                       </Text>
                       <View style={styles.videoActions}>
                         <Pressable
+                          accessibilityLabel={
+                            isRoundVideoReadyToSave(video) ? 'Save video' : 'Video is exporting'
+                          }
                           accessibilityRole="button"
+                          accessibilityState={{
+                            busy: !isRoundVideoReadyToSave(video) || savingVideoId === video.id,
+                            disabled: savingVideoId !== null || !isRoundVideoReadyToSave(video),
+                          }}
                           disabled={savingVideoId !== null || !isRoundVideoReadyToSave(video)}
                           onPress={() => handleSave(video)}
                           style={({ pressed }) => [
@@ -236,13 +244,13 @@ export default function DeckLibraryScreen() {
                             pressed && isRoundVideoReadyToSave(video) && styles.pressed,
                           ]}
                         >
-                          <Text style={styles.saveButtonText}>
-                            {!isRoundVideoReadyToSave(video)
-                              ? 'PREPARING…'
-                              : savingVideoId === video.id
-                                ? 'SAVING…'
-                                : 'SAVE'}
-                          </Text>
+                          {!isRoundVideoReadyToSave(video) ? (
+                            <ActivityIndicator color="#FFFFFF" size="small" />
+                          ) : (
+                            <Text numberOfLines={1} style={styles.saveButtonText}>
+                              {savingVideoId === video.id ? 'SAVING…' : 'SAVE'}
+                            </Text>
+                          )}
                         </Pressable>
                         <Pressable
                           accessibilityRole="button"

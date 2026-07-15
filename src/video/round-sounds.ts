@@ -1,6 +1,5 @@
 import { Asset } from 'expo-asset';
 import type { AudioPlayer } from 'expo-audio';
-import { Platform } from 'react-native';
 
 export type RoundSoundId =
   | 'get-ready'
@@ -40,14 +39,8 @@ export function preloadRoundSounds(sounds: RoundSoundId[]) {
   return Promise.all(sounds.map(resolveRoundSoundUri));
 }
 
-export async function playRoundSound(player: AudioPlayer, sound: RoundSoundId) {
+export async function playRoundSound(player: AudioPlayer) {
   try {
-    if (Platform.OS === 'ios') {
-      const uri = await resolveRoundSoundUri(sound);
-      const { playSystemSound } = await import('whatz-it-video-export');
-      await playSystemSound(uri);
-      return;
-    }
     await player.seekTo(0);
     player.play();
   } catch {

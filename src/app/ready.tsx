@@ -84,7 +84,7 @@ export default function ReadyScreen() {
   useEffect(() => {
     if (!positionReady || !orientationSettled || !recordingPrepared || isLeaving || introStarted.current) return;
     introStarted.current = true;
-    void playRoundSound(getReadyPlayer, 'get-ready');
+    void playRoundSound(getReadyPlayer);
     const timeout = setTimeout(async () => {
       const started = await startRecording();
       if (recordingPreparation === 'ready' && !started) {
@@ -110,7 +110,7 @@ export default function ReadyScreen() {
     recordOverlayEvent({ kind: 'countdown', text: String(count) });
     const sound: RoundSoundId = count === 3 ? 'count-3' : count === 2 ? 'count-2' : 'count-1';
     recordSoundCue(sound);
-    void playRoundSound(count === 3 ? count3Player : count === 2 ? count2Player : count1Player, sound);
+    void playRoundSound(count === 3 ? count3Player : count === 2 ? count2Player : count1Player);
   }, [count, count1Player, count2Player, count3Player, introComplete, isLeaving, recordOverlayEvent, recordSoundCue]);
 
   useEffect(() => {

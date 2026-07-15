@@ -73,11 +73,11 @@ export default function GameScreen() {
     (outcome: 'correct' | 'passed') => {
       if (outcome === 'correct') {
         recordSoundCue('correct');
-        void playRoundSound(correctPlayer, 'correct');
+        void playRoundSound(correctPlayer);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
       } else {
         recordSoundCue('pass');
-        void playRoundSound(passPlayer, 'pass');
+        void playRoundSound(passPlayer);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
       }
       answerCard(outcome);
@@ -113,7 +113,7 @@ export default function GameScreen() {
     if (round.status !== 'ready' || startSoundPlayed.current) return;
     startSoundPlayed.current = true;
     recordSoundCue('round-start');
-    void playRoundSound(roundStartPlayer, 'round-start');
+    void playRoundSound(roundStartPlayer);
   }, [recordSoundCue, round.status, roundStartPlayer]);
 
   useEffect(() => {
@@ -133,7 +133,7 @@ export default function GameScreen() {
     if (lastTickSecond.current === remainingSeconds) return;
     lastTickSecond.current = remainingSeconds;
     recordSoundCue('final-tick');
-    void playRoundSound(finalTickPlayer, 'final-tick');
+    void playRoundSound(finalTickPlayer);
   }, [finalTickPlayer, recordSoundCue, remainingSeconds, round.status]);
 
   useEffect(() => {
@@ -162,7 +162,7 @@ export default function GameScreen() {
     if (!finishSoundPlayed.current) {
       finishSoundPlayed.current = true;
       recordSoundCue('round-end');
-      void playRoundSound(roundEndPlayer, 'round-end');
+      void playRoundSound(roundEndPlayer);
     }
     if (resultsTransitionStarted.current) return;
     resultsTransitionStarted.current = true;
