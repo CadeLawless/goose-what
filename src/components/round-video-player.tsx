@@ -4,9 +4,9 @@ import { StatusBar } from 'expo-status-bar';
 import { useVideoPlayer, type VideoPlayer, VideoView } from 'expo-video';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  type GestureResponderEvent,
   Modal,
   Pressable,
-  type GestureResponderEvent,
   type StyleProp,
   StyleSheet,
   Text,
@@ -62,6 +62,8 @@ export function RoundVideoPlayer({
   const expandedRef = useRef(false);
   const previousVideoTime = useRef(0);
   const controlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isScrubbingRef = useRef(false);
+  const wasPlayingBeforeScrubRef = useRef(false);
   const [currentTime, setCurrentTime] = useState(0);
   const separateAudioUri = video.audioUri;
   const separateAudio = useAudioPlayer(separateAudioUri ?? null);
@@ -73,6 +75,7 @@ export function RoundVideoPlayer({
   });
 
   useEventListener(player, 'timeUpdate', ({ currentTime: nextTime }) => {
+    if (isScrubbingRef.current) return;
     setCurrentTime(nextTime);
     if (!expandedRef.current || !separateAudioUri) return;
     const looped = nextTime + 0.5 < previousVideoTime.current;
@@ -192,6 +195,8 @@ export function RoundVideoPlayer({
 
   const closeExpanded = () => {
     clearControlsTimer();
+    isScrubbingRef.current = false;
+    setPlayerScrubbingMode(player, false);
     expandedRef.current = false;
     pauseAudioPlayer(separateAudio);
     setPlayerMuted(player, true);
@@ -202,7 +207,6 @@ export function RoundVideoPlayer({
 
   const requestDelete = () => {
     if (!onDelete) return;
-    showControls();
     setDeleteError(null);
     setDeletePromptVisible(true);
   };
@@ -211,7 +215,6 @@ export function RoundVideoPlayer({
     if (isDeleting) return;
     setDeletePromptVisible(false);
     setDeleteError(null);
-    showControls();
   };
 
   const confirmDelete = async () => {
@@ -231,7 +234,6 @@ export function RoundVideoPlayer({
 
   const saveFromPlayer = async () => {
     if (!onSave || isSaving || saveDisabled) return;
-    showControls();
     const notice = await onSave(video);
     setSaveNotice(notice);
   };
@@ -255,9 +257,45 @@ export function RoundVideoPlayer({
     }
   };
 
-  const seekFromProgress = (event: GestureResponderEvent) => {
+  const getProgressTime = (event: GestureResponderEvent) => {
+    if (duration <= 0 || progressWidth <= 0) return null;
+    const progress = Math.min(1, Math.max(0, event.nativeEvent.locationX / progressWidth));
+    return progress * duration;
+  };
+
+  const scrubToProgress = (event: GestureResponderEvent) => {
+    const nextTime = getProgressTime(event);
+    if (nextTime === null) return null;
+    seekVideoPlayer(player, nextTime);
+    setCurrentTime(nextTime);
+    previousVideoTime.current = nextTime;
+    return nextTime;
+  };
+
+  const startScrubbing = (event: GestureResponderEvent) => {
     if (duration <= 0 || progressWidth <= 0) return;
-    seekTo((event.nativeEvent.locationX / progressWidth) * duration);
+    clearControlsTimer();
+    setControlsVisible(true);
+    wasPlayingBeforeScrubRef.current = player.playing;
+    isScrubbingRef.current = true;
+    player.pause();
+    setPlayerScrubbingMode(player, true);
+    pauseAudioPlayer(separateAudio);
+    scrubToProgress(event);
+  };
+
+  const finishScrubbing = (event: GestureResponderEvent) => {
+    if (!isScrubbingRef.current) return;
+    const nextTime = scrubToProgress(event) ?? player.currentTime;
+    const shouldResume = wasPlayingBeforeScrubRef.current;
+    isScrubbingRef.current = false;
+    setPlayerScrubbingMode(player, false);
+
+    if (separateAudioUri) {
+      void separateAudio.seekTo(nextTime).catch(() => undefined);
+    }
+    if (shouldResume) player.play();
+    scheduleControlsHide();
   };
 
   return (
@@ -330,122 +368,122 @@ export function RoundVideoPlayer({
                   style={StyleSheet.absoluteFill}
                 />
                 <PlaybackOverlay currentTimeMs={currentTime * 1000} event={event} />
-                {controlsVisible && (
-                  <>
-                    <View
-                      style={[
-                        styles.playerActions,
-                        { left: leftChromeInset, top: spacing.md },
-                      ]}
-                    >
-                      {onSave && (
-                        <Pressable
-                          accessibilityLabel="Download video to device"
-                          accessibilityRole="button"
-                          accessibilityState={{ busy: isSaving, disabled: isSaving || saveDisabled }}
-                          disabled={isSaving || saveDisabled}
-                          onPress={() => void saveFromPlayer()}
-                          style={({ pressed }) => [
-                            styles.playerActionButton,
-                            styles.downloadButton,
-                            pressed && !isSaving && !saveDisabled && styles.pressed,
-                            (isSaving || saveDisabled) && styles.disabled,
-                          ]}
-                        >
-                          <Text style={styles.downloadButtonText}>
-                            {video.exportStatus === 'failed'
-                              ? 'EXPORT FAILED'
-                              : saveDisabled
-                                ? 'PREPARING...'
-                                : isSaving
-                                  ? 'SAVING...'
-                                  : 'DOWNLOAD'}
-                          </Text>
-                        </Pressable>
-                      )}
-                      {onDelete && (
-                        <Pressable
-                          accessibilityLabel="Delete video"
-                          accessibilityRole="button"
-                          accessibilityState={{ busy: isDeleting, disabled: isSaving || isDeleting }}
-                          disabled={isSaving || isDeleting}
-                          onPress={requestDelete}
-                          style={({ pressed }) => [
-                            styles.playerActionButton,
-                            styles.playerDeleteButton,
-                            pressed && !isSaving && !isDeleting && styles.pressed,
-                            (isSaving || isDeleting) && styles.disabled,
-                          ]}
-                        >
-                          <Text style={styles.playerDeleteButtonText}>DELETE</Text>
-                        </Pressable>
-                      )}
-                    </View>
+                <View
+                  style={[styles.playerActions, { left: leftChromeInset, top: spacing.md }]}
+                >
+                  {onSave && (
                     <Pressable
-                      accessibilityLabel="Close video"
+                      accessibilityLabel="Download video to device"
                       accessibilityRole="button"
-                      hitSlop={8}
-                      onPress={closeExpanded}
+                      accessibilityState={{ busy: isSaving, disabled: isSaving || saveDisabled }}
+                      disabled={isSaving || saveDisabled}
+                      onPress={() => void saveFromPlayer()}
                       style={({ pressed }) => [
-                        styles.closeButton,
-                        { right: rightChromeInset, top: spacing.md },
-                        pressed && styles.pressed,
+                        styles.playerActionButton,
+                        styles.downloadButton,
+                        pressed && !isSaving && !saveDisabled && styles.pressed,
+                        (isSaving || saveDisabled) && styles.disabled,
                       ]}
                     >
-                      <Text style={styles.closeText}>{'\u00D7'}</Text>
+                      <Text style={styles.downloadButtonText}>
+                        {video.exportStatus === 'failed'
+                          ? 'EXPORT FAILED'
+                          : saveDisabled
+                            ? 'PREPARING...'
+                            : isSaving
+                              ? 'SAVING...'
+                              : 'DOWNLOAD'}
+                      </Text>
                     </Pressable>
-                    <View
-                      style={[
-                        styles.playbackControls,
-                        { left: leftChromeInset, right: rightChromeInset },
+                  )}
+                  {onDelete && (
+                    <Pressable
+                      accessibilityLabel="Delete video"
+                      accessibilityRole="button"
+                      accessibilityState={{ busy: isDeleting, disabled: isSaving || isDeleting }}
+                      disabled={isSaving || isDeleting}
+                      onPress={requestDelete}
+                      style={({ pressed }) => [
+                        styles.playerActionButton,
+                        styles.playerDeleteButton,
+                        pressed && !isSaving && !isDeleting && styles.pressed,
+                        (isSaving || isDeleting) && styles.disabled,
                       ]}
                     >
-                      <Pressable
-                        accessibilityLabel={isPlaying ? 'Pause video' : 'Play video'}
-                        accessibilityRole="button"
-                        onPress={togglePlayback}
-                        style={({ pressed }) => [styles.playPauseButton, pressed && styles.pressed]}
-                      >
-                        <Text style={styles.playPauseText}>
-                          {isPlaying ? '\u2161' : '\u25B6'}
-                        </Text>
-                      </Pressable>
-                      <Text style={styles.playbackTime}>{formatRoundClock(currentTime)}</Text>
-                      <Pressable
-                        accessibilityActions={[
-                          { name: 'increment', label: 'Seek forward 10 seconds' },
-                          { name: 'decrement', label: 'Seek backward 10 seconds' },
-                        ]}
-                        accessibilityLabel="Video progress"
-                        accessibilityRole="adjustable"
-                        accessibilityValue={{
-                          max: Math.round(duration),
-                          min: 0,
-                          now: Math.round(currentTime),
-                          text: `${formatRoundClock(currentTime)} of ${formatRoundClock(duration)}`,
-                        }}
-                        onAccessibilityAction={({ nativeEvent }) => {
-                          if (nativeEvent.actionName === 'increment') seekTo(currentTime + 10);
-                          if (nativeEvent.actionName === 'decrement') seekTo(currentTime - 10);
-                        }}
-                        onLayout={(layoutEvent) => {
-                          setProgressWidth(layoutEvent.nativeEvent.layout.width);
-                        }}
-                        onPress={seekFromProgress}
-                        style={styles.progressHitArea}
-                      >
-                        <View style={styles.progressTrack}>
-                          <View
-                            style={[styles.progressFill, { width: `${playbackProgress * 100}%` }]}
-                          />
-                          <View
-                            style={[styles.progressThumb, { left: `${playbackProgress * 100}%` }]}
-                          />
-                        </View>
-                      </Pressable>
-                      <Text style={styles.playbackTime}>{formatRoundClock(duration)}</Text>
+                      <Text style={styles.playerDeleteButtonText}>DELETE</Text>
+                    </Pressable>
+                  )}
+                </View>
+                <Pressable
+                  accessibilityLabel="Close video"
+                  accessibilityRole="button"
+                  hitSlop={8}
+                  onPress={closeExpanded}
+                  style={({ pressed }) => [
+                    styles.closeButton,
+                    { right: rightChromeInset, top: spacing.md },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text style={styles.closeText}>{'\u00D7'}</Text>
+                </Pressable>
+                {controlsVisible && (
+                  <View
+                    style={[
+                      styles.playbackControls,
+                      { left: leftChromeInset, right: rightChromeInset },
+                    ]}
+                  >
+                    <Pressable
+                      accessibilityLabel={isPlaying ? 'Pause video' : 'Play video'}
+                      accessibilityRole="button"
+                      onPress={togglePlayback}
+                      style={({ pressed }) => [styles.playPauseButton, pressed && styles.pressed]}
+                    >
+                      <Text style={styles.playPauseText}>
+                        {isPlaying ? '\u2161' : '\u25B6'}
+                      </Text>
+                    </Pressable>
+                    <Text style={styles.playbackTime}>{formatRoundClock(currentTime)}</Text>
+                    <View
+                      accessibilityActions={[
+                        { name: 'increment', label: 'Seek forward 10 seconds' },
+                        { name: 'decrement', label: 'Seek backward 10 seconds' },
+                      ]}
+                      accessibilityLabel="Video progress"
+                      accessibilityRole="adjustable"
+                      accessibilityValue={{
+                        max: Math.round(duration),
+                        min: 0,
+                        now: Math.round(currentTime),
+                        text: `${formatRoundClock(currentTime)} of ${formatRoundClock(duration)}`,
+                      }}
+                      onAccessibilityAction={({ nativeEvent }) => {
+                        if (nativeEvent.actionName === 'increment') seekTo(currentTime + 10);
+                        if (nativeEvent.actionName === 'decrement') seekTo(currentTime - 10);
+                      }}
+                      onLayout={(layoutEvent) => {
+                        setProgressWidth(layoutEvent.nativeEvent.layout.width);
+                      }}
+                      onMoveShouldSetResponder={() => true}
+                      onResponderGrant={startScrubbing}
+                      onResponderMove={scrubToProgress}
+                      onResponderRelease={finishScrubbing}
+                      onResponderTerminate={finishScrubbing}
+                      onStartShouldSetResponder={() => true}
+                      style={styles.progressHitArea}
+                    >
+                      <View style={styles.progressTrack}>
+                        <View
+                          style={[styles.progressFill, { width: `${playbackProgress * 100}%` }]}
+                        />
+                        <View
+                          style={[styles.progressThumb, { left: `${playbackProgress * 100}%` }]}
+                        />
+                      </View>
                     </View>
-                  </>
+                    <Text style={styles.playbackTime}>{formatRoundClock(duration)}</Text>
+                  </View>
                 )}
               </View>
             </View>
@@ -488,6 +526,10 @@ function setPlayerMuted(player: VideoPlayer, muted: boolean) {
 
 function seekVideoPlayer(player: VideoPlayer, time: number) {
   player.currentTime = time;
+}
+
+function setPlayerScrubbingMode(player: VideoPlayer, enabled: boolean) {
+  player.scrubbingModeOptions = { scrubbingModeEnabled: enabled };
 }
 
 function pauseAudioPlayer(player: AudioPlayer) {
@@ -693,6 +735,7 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
+    display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.62)',
