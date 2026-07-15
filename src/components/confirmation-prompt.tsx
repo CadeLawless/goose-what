@@ -1,16 +1,20 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { LandscapeViewport } from '@/components/landscape-viewport';
 import { colors, radius, spacing, typography } from '@/theme';
+
+export type PromptOrientation = 'portrait' | 'landscape';
 
 type ConfirmationPromptProps = {
   visible: boolean;
   title: string;
   message: string;
-  cancelLabel?: string;
+  cancelLabel?: string | null;
   confirmLabel: string;
   busyLabel?: string;
   busy?: boolean;
   destructive?: boolean;
+  orientation?: PromptOrientation;
   onCancel: () => void;
   onConfirm: () => void;
 };
@@ -24,12 +28,13 @@ export function ConfirmationPrompt({
   busyLabel = 'WORKING...',
   busy = false,
   destructive = false,
+  orientation = 'portrait',
   onCancel,
   onConfirm,
 }: ConfirmationPromptProps) {
   if (!visible) return null;
 
-  return (
+  const prompt = (
     <View accessibilityViewIsModal style={styles.overlay}>
       <Pressable
         accessibilityLabel="Dismiss confirmation"
@@ -44,18 +49,20 @@ export function ConfirmationPrompt({
         </Text>
         <Text style={styles.message}>{message}</Text>
         <View style={styles.actions}>
-          <Pressable
-            accessibilityRole="button"
-            disabled={busy}
-            onPress={onCancel}
-            style={({ pressed }) => [
-              styles.cancelButton,
-              pressed && !busy && styles.pressed,
-              busy && styles.disabled,
-            ]}
-          >
-            <Text style={styles.cancelText}>{cancelLabel}</Text>
-          </Pressable>
+          {cancelLabel && (
+            <Pressable
+              accessibilityRole="button"
+              disabled={busy}
+              onPress={onCancel}
+              style={({ pressed }) => [
+                styles.cancelButton,
+                pressed && !busy && styles.pressed,
+                busy && styles.disabled,
+              ]}
+            >
+              <Text style={styles.cancelText}>{cancelLabel}</Text>
+            </Pressable>
+          )}
           <Pressable
             accessibilityRole="button"
             accessibilityState={{ busy, disabled: busy }}
@@ -74,11 +81,27 @@ export function ConfirmationPrompt({
       </View>
     </View>
   );
+
+  return (
+    <Modal
+      animationType="fade"
+      onRequestClose={onCancel}
+      supportedOrientations={['portrait', 'landscape', 'landscape-left', 'landscape-right']}
+      transparent
+      visible={visible}
+    >
+      {orientation === 'landscape' ? (
+        <LandscapeViewport backgroundColor="transparent">{prompt}</LandscapeViewport>
+      ) : (
+        prompt
+      )}
+    </Modal>
+  );
 }
 
 const styles = StyleSheet.create({
   overlay: {
-    ...StyleSheet.absoluteFill,
+    flex: 1,
     zIndex: 1000,
     elevation: 1000,
     alignItems: 'center',

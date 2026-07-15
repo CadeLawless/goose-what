@@ -3,7 +3,6 @@ import { useFocusEffect } from 'expo-router';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -20,7 +19,10 @@ import Animated, {
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { ConfirmationPrompt } from '@/components/confirmation-prompt';
+import {
+  ConfirmationPrompt,
+  type PromptOrientation,
+} from '@/components/confirmation-prompt';
 import { DeckCard } from '@/components/deck-card';
 import { PortraitTransition } from '@/components/orientation-transition';
 import { RoundVideoPlayer } from '@/components/round-video-player';
@@ -47,6 +49,11 @@ export default function DeckLibraryScreen() {
   const [videoPendingDelete, setVideoPendingDelete] = useState<RoundVideo | null>(null);
   const [isDeletingVideo, setIsDeletingVideo] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [saveNotice, setSaveNotice] = useState<{
+    title: string;
+    message: string;
+    orientation: PromptOrientation;
+  } | null>(null);
   const pageWidth = Math.min(width, 720);
   const horizontalPadding = width < 380 ? 22 : Math.min(48, Math.round(width * 0.074));
   const columnGap = width < 380 ? 16 : Math.min(32, Math.round(width * 0.06));
@@ -82,18 +89,22 @@ export default function DeckLibraryScreen() {
     }, []),
   );
 
-  const handleSave = async (video: RoundVideo) => {
+  const handleSave = async (
+    video: RoundVideo,
+    orientation: PromptOrientation = 'portrait',
+  ) => {
     if (savingVideoId || !isRoundVideoReadyToSave(video)) return;
     setSavingVideoId(video.id);
     try {
       await saveRoundVideoToDevice(video);
-      Alert.alert(
-        'Video saved',
-        'The round video, its sound, and the card overlay are now in your device library.',
-      );
+      setSaveNotice({
+        title: 'Video saved',
+        message: 'The round video and its sound are now in your device library.',
+        orientation,
+      });
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'Please try again.';
-      Alert.alert('Could not save video', detail);
+      setSaveNotice({ title: 'Could not save video', message: detail, orientation });
     } finally {
       setSavingVideoId(null);
     }
@@ -264,6 +275,16 @@ export default function DeckLibraryScreen() {
         onConfirm={confirmDelete}
         title={deleteError ? 'Could not delete video' : 'Delete round video?'}
         visible={videoPendingDelete !== null}
+      />
+      <ConfirmationPrompt
+        cancelLabel={null}
+        confirmLabel="OK"
+        message={saveNotice?.message ?? ''}
+        onCancel={() => setSaveNotice(null)}
+        onConfirm={() => setSaveNotice(null)}
+        orientation={saveNotice?.orientation}
+        title={saveNotice?.title ?? ''}
+        visible={saveNotice !== null}
       />
     </SafeAreaView>
   );

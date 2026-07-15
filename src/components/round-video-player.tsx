@@ -15,6 +15,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LandscapeViewport } from '@/components/landscape-viewport';
+import type { PromptOrientation } from '@/components/confirmation-prompt';
 import { colors, radius, spacing } from '@/theme';
 import type { RoundVideo, RoundVideoEvent } from '@/video/round-videos';
 
@@ -23,7 +24,7 @@ type RoundVideoPlayerProps = {
   style?: StyleProp<ViewStyle>;
   isSaving?: boolean;
   saveDisabled?: boolean;
-  onSave?: (video: RoundVideo) => void | Promise<void>;
+  onSave?: (video: RoundVideo, orientation: PromptOrientation) => void | Promise<void>;
   onDelete?: (video: RoundVideo) => void;
 };
 
@@ -162,7 +163,7 @@ export function RoundVideoPlayer({
                   accessibilityRole="button"
                   accessibilityState={{ busy: isSaving, disabled: isSaving || saveDisabled }}
                   disabled={isSaving || saveDisabled}
-                  onPress={() => void onSave(video)}
+                  onPress={() => void onSave(video, 'landscape')}
                   style={({ pressed }) => [
                     styles.playerActionButton,
                     styles.downloadButton,

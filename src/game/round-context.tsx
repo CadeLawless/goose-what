@@ -30,7 +30,6 @@ import {
   type RoundVideoEvent,
 } from '@/video/round-videos';
 import {
-  resolveRoundAudioCues,
   type RoundSoundId,
   type RoundVideoSoundCue,
 } from '@/video/round-sounds';
@@ -169,27 +168,14 @@ export function RoundProvider({ children }: PropsWithChildren) {
     }
     const deckId = round.deckId;
     const events = [...recordingEvents.current];
-    const soundCues = [...recordingSoundCues.current];
     stoppingPromise.current = (async () => {
       try {
         const capture = await cameraRef.current?.stopRecording();
         if (!capture) return null;
 
-        let temporaryAudioUri = capture.microphoneUri;
-        if (Platform.OS === 'ios' && capture.microphoneUri) {
-          try {
-            const { mixRoundAudio } = await import('whatz-it-video-export');
-            temporaryAudioUri = await mixRoundAudio(
-              capture.videoUri,
-              capture.microphoneUri,
-              capture.microphoneOffsetMs,
-              await resolveRoundAudioCues(soundCues),
-            );
-          } catch {
-            // Preserve the microphone recording if cue mixing is ever unavailable.
-            temporaryAudioUri = capture.microphoneUri;
-          }
-        }
+        // The microphone naturally captures the audible round cues. Mixing the cue
+        // files in again makes every game sound play twice.
+        const temporaryAudioUri = capture.microphoneUri;
 
         const video = await storeRoundVideo(capture.videoUri, temporaryAudioUri, deckId, events);
         setCurrentVideo(video);

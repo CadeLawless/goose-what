@@ -1,4 +1,4 @@
-import { setAudioModeAsync } from 'expo-audio';
+import { RecordingPresets, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
 import { forwardRef, useImperativeHandle, useRef } from 'react';
 import { Platform, StyleSheet } from 'react-native';
 import {
@@ -47,24 +47,21 @@ async function prepareRoundRecordingAudio() {
     playsInSilentMode: true,
     shouldRouteThroughEarpiece: false,
   });
-  if (Platform.OS === 'ios') {
-    const { prepareRecordingAudio } = await import('whatz-it-video-export');
-    await prepareRecordingAudio();
-  }
 }
 
 export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
   function RoundCamera({ enabled, microphoneEnabled, onError, onReady }, ref) {
     const device = useCameraDevice('front');
+    const microphoneRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
     const videoOutput = useVideoOutput({
-      // iOS microphone audio is recorded independently and mixed after the round.
+      // iOS microphone audio is recorded independently by expo-audio.
       // This avoids VisionCamera's intermittently missing iOS audio track.
       enableAudio: microphoneEnabled && Platform.OS !== 'ios',
       fileType: 'mp4',
     });
     const recorderRef = useRef<Recorder | null>(null);
     const resultPromiseRef = useRef<Promise<string> | null>(null);
-    const microphoneRef = useRef<{ uri: string; offsetMs: number } | null>(null);
+    const microphoneRef = useRef<{ offsetMs: number } | null>(null);
 
     useImperativeHandle(
       ref,
@@ -95,10 +92,9 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
             const videoStartedAt = Date.now();
             if (Platform.OS === 'ios' && microphonePrepared) {
               try {
-                const { startMicrophoneRecording } = await import('whatz-it-video-export');
-                const microphoneUri = await startMicrophoneRecording();
+                await microphoneRecorder.prepareToRecordAsync();
+                microphoneRecorder.record();
                 microphoneRef.current = {
-                  uri: microphoneUri,
                   offsetMs: Math.max(0, Date.now() - videoStartedAt),
                 };
               } catch (error) {
@@ -114,12 +110,11 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
             } catch {
               // The recorder may already have stopped while cleaning up a failed start.
             }
-            if (Platform.OS === 'ios' && microphoneEnabled) {
+            if (Platform.OS === 'ios' && microphoneRecorder.isRecording) {
               try {
-                const { cancelMicrophoneRecording } = await import('whatz-it-video-export');
-                await cancelMicrophoneRecording();
+                await microphoneRecorder.stop();
               } catch {
-                // There may be no native microphone recorder to cancel.
+                // There may be no microphone recorder to stop.
               }
             }
             recorderRef.current = null;
@@ -134,10 +129,10 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
           if (!recorder || !result) return null;
           try {
             if (recorder.isRecording) await recorder.stopRecording();
-            let microphoneUri = microphoneRef.current?.uri;
+            let microphoneUri: string | undefined;
             if (Platform.OS === 'ios' && microphoneRef.current) {
-              const { stopMicrophoneRecording } = await import('whatz-it-video-export');
-              microphoneUri = await stopMicrophoneRecording();
+              await microphoneRecorder.stop();
+              microphoneUri = microphoneRecorder.uri ?? undefined;
             }
             return {
               videoUri: await result,
@@ -158,9 +153,14 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
             // Continue so the independently recorded microphone file is also removed.
           }
           try {
-            if (Platform.OS === 'ios' && microphoneRef.current) {
-              const { cancelMicrophoneRecording } = await import('whatz-it-video-export');
-              await cancelMicrophoneRecording();
+            if (Platform.OS === 'ios' && microphoneRecorder.isRecording) {
+              await microphoneRecorder.stop();
+              const microphoneUri = microphoneRecorder.uri;
+              if (microphoneUri) {
+                const { File } = await import('expo-file-system');
+                const file = new File(microphoneUri);
+                if (file.exists) file.delete();
+              }
             }
           } catch {
             // There may be no native microphone recorder left to cancel.
@@ -171,7 +171,7 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
           }
         },
       }),
-      [device, enabled, microphoneEnabled, videoOutput],
+      [device, enabled, microphoneEnabled, microphoneRecorder, videoOutput],
     );
 
     if (!enabled || !device) return null;
