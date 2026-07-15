@@ -1,5 +1,6 @@
 import { Image } from 'expo-image';
 import { useFocusEffect } from 'expo-router';
+import type { ReactNode } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
@@ -10,6 +11,13 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import Animated, {
+  Easing,
+  interpolate,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DeckCard } from '@/components/deck-card';
@@ -126,7 +134,7 @@ export default function DeckLibraryScreen() {
             onPress={() => setDecksExpanded((expanded) => !expanded)}
           />
 
-          {decksExpanded && (
+          <CollapsibleContent expanded={decksExpanded}>
             <View style={[styles.deckGrid, { columnGap, rowGap: columnGap }]}>
               {decks.map((deck) => (
                 <View key={deck.id} style={{ width: deckWidth, aspectRatio: 2 / 3 }}>
@@ -134,25 +142,26 @@ export default function DeckLibraryScreen() {
                 </View>
               ))}
             </View>
-          )}
+          </CollapsibleContent>
 
           <View style={styles.videoSection}>
+            <View accessibilityElementsHidden style={styles.sectionDivider} />
+
             <SectionHeading
               expanded={videosExpanded}
               label="MY VIDEOS"
               onPress={() => setVideosExpanded((expanded) => !expanded)}
             />
 
-            {videosExpanded && videos.length === 0 && (
-              <Text style={styles.emptyVideos}>Your last 10 round videos will appear here.</Text>
-            )}
-
-            {videosExpanded && videos.length > 0 && (
-              <View style={[styles.videoGrid, { columnGap, rowGap: columnGap }]}>
-                {videos.map((video) => {
-                  const deck = getDeckById(video.deckId);
-                  return (
-                    <View key={video.id} style={[styles.videoCard, { width: videoWidth }]}>
+            <CollapsibleContent expanded={videosExpanded}>
+              {videos.length === 0 ? (
+                <Text style={styles.emptyVideos}>Your last 10 round videos will appear here.</Text>
+              ) : (
+                <View style={[styles.videoGrid, { columnGap, rowGap: columnGap }]}>
+                  {videos.map((video) => {
+                    const deck = getDeckById(video.deckId);
+                    return (
+                      <View key={video.id} style={[styles.videoCard, { width: videoWidth }]}>
                       <RoundVideoPlayer video={video} style={styles.video} />
                       <Text numberOfLines={1} style={styles.videoDeckName}>
                         {deck?.title ?? 'Round video'}
@@ -186,15 +195,52 @@ export default function DeckLibraryScreen() {
                           <Text style={styles.deleteButtonText}>DELETE</Text>
                         </Pressable>
                       </View>
-                    </View>
-                  );
-                })}
-              </View>
-            )}
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+            </CollapsibleContent>
           </View>
         </View>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+const COLLAPSE_DURATION = 280;
+
+function CollapsibleContent({ expanded, children }: { expanded: boolean; children: ReactNode }) {
+  const [contentHeight, setContentHeight] = useState(0);
+  const progress = useSharedValue(expanded ? 1 : 0);
+
+  useEffect(() => {
+    progress.value = withTiming(expanded ? 1 : 0, {
+      duration: COLLAPSE_DURATION,
+      easing: Easing.out(Easing.cubic),
+    });
+  }, [expanded, progress]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    height: contentHeight * progress.value,
+    opacity: progress.value,
+    transform: [{ translateY: interpolate(progress.value, [0, 1], [-10, 0]) }],
+  }));
+
+  return (
+    <Animated.View
+      accessibilityElementsHidden={!expanded}
+      importantForAccessibility={expanded ? 'auto' : 'no-hide-descendants'}
+      pointerEvents={expanded ? 'auto' : 'none'}
+      style={[styles.collapsible, animatedStyle]}
+    >
+      <View
+        onLayout={(event) => setContentHeight(event.nativeEvent.layout.height)}
+        style={styles.collapsibleContent}
+      >
+        {children}
+      </View>
+    </Animated.View>
   );
 }
 
@@ -274,8 +320,15 @@ const styles = StyleSheet.create({
     transform: [{ rotate: '45deg' }],
   },
   chevronCollapsed: { marginTop: 5, transform: [{ rotate: '-135deg' }] },
+  collapsible: { overflow: 'hidden' },
+  collapsibleContent: { position: 'absolute', top: 0, right: 0, left: 0 },
   deckGrid: { flexDirection: 'row', flexWrap: 'wrap' },
-  videoSection: { marginTop: 42 },
+  videoSection: { marginTop: 34 },
+  sectionDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginBottom: 30,
+    backgroundColor: '#CBD5E1',
+  },
   emptyVideos: {
     color: '#64748B',
     fontSize: 15,
