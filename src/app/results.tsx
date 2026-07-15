@@ -27,9 +27,6 @@ export default function ResultsScreen() {
   const [isStarting, setIsStarting] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
   const [isSavingVideo, setIsSavingVideo] = useState(false);
-  const [deletePromptVisible, setDeletePromptVisible] = useState(false);
-  const [isDeletingVideo, setIsDeletingVideo] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState<{
     title: string;
     message: string;
@@ -119,31 +116,6 @@ export default function ResultsScreen() {
     }
   };
 
-  const requestDeleteVideo = () => {
-    setDeleteError(null);
-    setDeletePromptVisible(true);
-  };
-
-  const cancelDeleteVideo = () => {
-    if (isDeletingVideo) return;
-    setDeletePromptVisible(false);
-    setDeleteError(null);
-  };
-
-  const confirmDeleteVideo = async () => {
-    if (!currentVideo || isDeletingVideo) return;
-    setIsDeletingVideo(true);
-    setDeleteError(null);
-    try {
-      await deleteCurrentVideo();
-      setDeletePromptVisible(false);
-    } catch (error) {
-      setDeleteError(error instanceof Error ? error.message : 'Please try again.');
-    } finally {
-      setIsDeletingVideo(false);
-    }
-  };
-
   return (
     <SafeAreaView
       ref={screenRef}
@@ -152,9 +124,7 @@ export default function ResultsScreen() {
       edges={['top', 'bottom']}
     >
       <FlatList
-        accessibilityElementsHidden={deletePromptVisible}
         data={round.results}
-        importantForAccessibility={deletePromptVisible ? 'no-hide-descendants' : 'auto'}
         style={styles.list}
         keyExtractor={(item) => item.cardId}
         contentContainerStyle={styles.content}
@@ -169,7 +139,7 @@ export default function ResultsScreen() {
                   isSaving={isSavingVideo}
                   key={currentVideo.id}
                   saveDisabled={!videoReady}
-                  onDelete={requestDeleteVideo}
+                  onDelete={() => deleteCurrentVideo()}
                   onSave={handleSaveVideo}
                   video={currentVideo}
                   style={styles.video}
@@ -234,11 +204,7 @@ export default function ResultsScreen() {
         ItemSeparatorComponent={() => <View style={styles.separator} />}
         ListEmptyComponent={<Text style={styles.noCards}>Time ran out before a card was answered.</Text>}
       />
-      <View
-        accessibilityElementsHidden={deletePromptVisible}
-        importantForAccessibility={deletePromptVisible ? 'no-hide-descendants' : 'auto'}
-        style={styles.actions}
-      >
+      <View style={styles.actions}>
         <Pressable
           disabled={isStarting || isLeaving}
           onPress={handleReplay}
@@ -254,21 +220,6 @@ export default function ResultsScreen() {
           <Text style={styles.secondaryButtonText}>BACK TO DECKS</Text>
         </Pressable>
       </View>
-      <ConfirmationPrompt
-        busy={isDeletingVideo}
-        busyLabel="DELETING..."
-        confirmLabel="DELETE VIDEO"
-        destructive
-        message={
-          deleteError
-            ? `The video could not be deleted. ${deleteError}`
-            : 'This removes the video from WHATZ IT on this device.'
-        }
-        onCancel={cancelDeleteVideo}
-        onConfirm={confirmDeleteVideo}
-        title={deleteError ? 'Could not delete video' : 'Delete round video?'}
-        visible={deletePromptVisible && currentVideo !== null}
-      />
       <ConfirmationPrompt
         cancelLabel={null}
         confirmLabel="OK"

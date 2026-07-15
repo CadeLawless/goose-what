@@ -32,7 +32,7 @@ type RoundVideoPlayerProps = {
   isSaving?: boolean;
   saveDisabled?: boolean;
   onSave?: (video: RoundVideo) => Promise<VideoSaveNotice>;
-  onDelete?: (video: RoundVideo) => void;
+  onDelete?: (video: RoundVideo) => Promise<void>;
 };
 
 export function RoundVideoPlayer({
@@ -46,6 +46,9 @@ export function RoundVideoPlayer({
   const insets = useSafeAreaInsets();
   const [expanded, setExpanded] = useState(false);
   const [saveNotice, setSaveNotice] = useState<VideoSaveNotice | null>(null);
+  const [deletePromptVisible, setDeletePromptVisible] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   // Keep one source for this player's entire mounted lifetime. Replacing the raw
   // recording with its finished export would otherwise restart visible playback.
   const [playbackUri] = useState(() => video.uri);
@@ -129,8 +132,29 @@ export function RoundVideoPlayer({
 
   const requestDelete = () => {
     if (!onDelete) return;
-    closeExpanded();
-    onDelete(video);
+    setDeleteError(null);
+    setDeletePromptVisible(true);
+  };
+
+  const cancelDelete = () => {
+    if (isDeleting) return;
+    setDeletePromptVisible(false);
+    setDeleteError(null);
+  };
+
+  const confirmDelete = async () => {
+    if (!onDelete || isDeleting) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      await onDelete(video);
+      setDeletePromptVisible(false);
+      closeExpanded();
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const saveFromPlayer = async () => {
@@ -163,7 +187,13 @@ export function RoundVideoPlayer({
 
       <Modal
         animationType="fade"
-        onRequestClose={() => (saveNotice ? setSaveNotice(null) : closeExpanded())}
+        onRequestClose={() =>
+          deletePromptVisible
+            ? cancelDelete()
+            : saveNotice
+              ? setSaveNotice(null)
+              : closeExpanded()
+        }
         statusBarTranslucent
         supportedOrientations={['portrait', 'landscape', 'landscape-left', 'landscape-right']}
         visible={expanded}
@@ -210,13 +240,14 @@ export function RoundVideoPlayer({
                   <Pressable
                     accessibilityLabel="Delete video"
                     accessibilityRole="button"
-                    disabled={isSaving}
+                    accessibilityState={{ busy: isDeleting, disabled: isSaving || isDeleting }}
+                    disabled={isSaving || isDeleting}
                     onPress={requestDelete}
                     style={({ pressed }) => [
                       styles.playerActionButton,
                       styles.playerDeleteButton,
-                      pressed && !isSaving && styles.pressed,
-                      isSaving && styles.disabled,
+                      pressed && !isSaving && !isDeleting && styles.pressed,
+                      (isSaving || isDeleting) && styles.disabled,
                     ]}
                   >
                     <Text style={styles.playerDeleteButtonText}>DELETE</Text>
@@ -244,6 +275,22 @@ export function RoundVideoPlayer({
               />
               <PlaybackOverlay currentTimeMs={currentTime * 1000} event={event} />
             </View>
+            <ConfirmationPrompt
+              busy={isDeleting}
+              busyLabel="DELETING..."
+              confirmLabel="DELETE VIDEO"
+              destructive
+              embedded
+              message={
+                deleteError
+                  ? `The video could not be deleted. ${deleteError}`
+                  : 'This removes the video from WHATZ IT on this device.'
+              }
+              onCancel={cancelDelete}
+              onConfirm={() => void confirmDelete()}
+              title={deleteError ? 'Could not delete video' : 'Delete round video?'}
+              visible={deletePromptVisible}
+            />
             <ConfirmationPrompt
               cancelLabel={null}
               confirmLabel="OK"

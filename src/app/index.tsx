@@ -139,6 +139,11 @@ export default function DeckLibraryScreen() {
     setVideoPendingDelete(video);
   };
 
+  const deleteFromPlayer = async (video: RoundVideo) => {
+    const next = await deleteRoundVideo(video.id);
+    setVideos(next);
+  };
+
   const cancelDelete = () => {
     if (isDeletingVideo) return;
     setVideoPendingDelete(null);
@@ -235,7 +240,7 @@ export default function DeckLibraryScreen() {
                       <RoundVideoPlayer
                         isSaving={savingVideoId === video.id}
                         saveDisabled={!isRoundVideoReadyToSave(video)}
-                        onDelete={handleDelete}
+                        onDelete={deleteFromPlayer}
                         onSave={handleSave}
                         video={video}
                         style={styles.video}
