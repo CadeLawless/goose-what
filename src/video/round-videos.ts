@@ -6,6 +6,7 @@ import { logVideoDiagnostic, warnVideoDiagnostic } from '@/video/video-diagnosti
 const STORAGE_KEY = 'whatz-it:round-videos:v1';
 const MAX_STORED_VIDEOS = 10;
 const VIDEO_DIRECTORY_NAME = 'round-videos';
+const COMPLETED_EXPORT_PATTERN = /^(\d+-[a-z0-9]+)-export\.mp4$/i;
 
 export type RoundVideo = {
   id: string;
@@ -25,16 +26,22 @@ export type RoundVideoEvent = {
   text: string;
 };
 
+type StoredRoundVideo = Omit<RoundVideo, 'uri' | 'audioUri' | 'exportUri'> & {
+  uri: string;
+  audioUri?: string;
+  exportUri?: string;
+};
+
 function readExtension(uri: string) {
   const match = uri.split('?')[0].match(/\.([a-zA-Z0-9]+)$/);
   return match?.[1] ?? 'mp4';
 }
 
-async function readStoredMetadata(): Promise<RoundVideo[]> {
+async function readStoredMetadata(): Promise<StoredRoundVideo[]> {
   const stored = await AsyncStorage.getItem(STORAGE_KEY);
   if (!stored) return [];
   try {
-    const parsed = JSON.parse(stored) as RoundVideo[];
+    const parsed = JSON.parse(stored) as StoredRoundVideo[];
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
@@ -42,15 +49,14 @@ async function readStoredMetadata(): Promise<RoundVideo[]> {
 }
 
 async function writeStoredMetadata(videos: RoundVideo[]) {
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(videos));
+  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(videos.map(toStoredRoundVideo)));
 }
 
 const activeExports = new Map<string, Promise<RoundVideo>>();
 
 export async function loadRoundVideos() {
   if (Platform.OS === 'web') return [];
-  const { File } = await import('expo-file-system');
-  const videos = await readStoredMetadata();
+  const { File, storedVideos, videoDirectory, videos } = await readHydratedMetadata();
   const available = videos
     .filter((video) => new File(video.uri).exists)
     .map((video) => {
@@ -79,8 +85,14 @@ export async function loadRoundVideos() {
             : ('ready' as const),
       };
     });
-  if (JSON.stringify(available) !== JSON.stringify(videos)) await writeStoredMetadata(available);
-  return available.sort((a, b) => b.createdAt - a.createdAt);
+  const recovered = recoverCompletedExports(videoDirectory, available, File);
+  const next = [...available, ...recovered]
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, MAX_STORED_VIDEOS);
+  if (JSON.stringify(next.map(toStoredRoundVideo)) !== JSON.stringify(storedVideos)) {
+    await writeStoredMetadata(next);
+  }
+  return next;
 }
 
 export async function storeRoundVideo(
@@ -139,8 +151,7 @@ export async function storeRoundVideo(
 
 export async function deleteRoundVideo(id: string) {
   if (Platform.OS === 'web') return [];
-  const { File } = await import('expo-file-system');
-  const videos = await readStoredMetadata();
+  const { File, videos } = await readHydratedMetadata();
   const removed = videos.find((video) => video.id === id);
   if (removed) deleteVideoFiles(removed, File);
   const next = videos.filter((video) => video.id !== id);
@@ -378,10 +389,99 @@ async function inspectVideoAudioTrackCount(uri: string): Promise<number | null> 
 }
 
 async function updateStoredVideo(video: RoundVideo) {
-  const videos = await readStoredMetadata();
+  const { videos } = await readHydratedMetadata();
   const next = videos.map((item) => (item.id === video.id ? video : item));
   await writeStoredMetadata(next);
   return video;
+}
+
+async function readHydratedMetadata() {
+  const { Directory, File, Paths } = await import('expo-file-system');
+  const videoDirectory = new Directory(Paths.document, VIDEO_DIRECTORY_NAME);
+  videoDirectory.create({ idempotent: true, intermediates: true });
+  const storedVideos = await readStoredMetadata();
+  const videos = storedVideos.map((video) =>
+    hydrateStoredRoundVideo(video, videoDirectory, File),
+  );
+  return { File, storedVideos, videoDirectory, videos };
+}
+
+function hydrateStoredRoundVideo(
+  video: StoredRoundVideo,
+  videoDirectory: import('expo-file-system').Directory,
+  FileType: typeof import('expo-file-system').File,
+): RoundVideo {
+  return {
+    ...video,
+    uri: resolveManagedFileUri(video.uri, videoDirectory, FileType),
+    audioUri: video.audioUri
+      ? resolveManagedFileUri(video.audioUri, videoDirectory, FileType)
+      : undefined,
+    exportUri: video.exportUri
+      ? resolveManagedFileUri(video.exportUri, videoDirectory, FileType)
+      : undefined,
+  };
+}
+
+function toStoredRoundVideo(video: RoundVideo): StoredRoundVideo {
+  return {
+    ...video,
+    uri: getManagedFileName(video.uri),
+    audioUri: video.audioUri ? getManagedFileName(video.audioUri) : undefined,
+    exportUri: video.exportUri ? getManagedFileName(video.exportUri) : undefined,
+  };
+}
+
+function resolveManagedFileUri(
+  storedUri: string,
+  videoDirectory: import('expo-file-system').Directory,
+  FileType: typeof import('expo-file-system').File,
+) {
+  return new FileType(videoDirectory, getManagedFileName(storedUri)).uri;
+}
+
+function getManagedFileName(uri: string) {
+  const path = uri.split(/[?#]/, 1)[0].replace(/\\/g, '/');
+  const fileName = path.slice(path.lastIndexOf('/') + 1);
+  try {
+    return decodeURIComponent(fileName);
+  } catch {
+    return fileName;
+  }
+}
+
+function recoverCompletedExports(
+  videoDirectory: import('expo-file-system').Directory,
+  videos: RoundVideo[],
+  FileType: typeof import('expo-file-system').File,
+) {
+  const knownFiles = new Set(
+    videos.flatMap((video) => [video.uri, video.audioUri, video.exportUri].filter(Boolean)),
+  );
+  const recovered = videoDirectory
+    .list()
+    .filter((entry): entry is import('expo-file-system').File => entry instanceof FileType)
+    .flatMap((file) => {
+      const match = file.name.match(COMPLETED_EXPORT_PATTERN);
+      if (!match || knownFiles.has(file.uri)) return [];
+      const createdAt = Number(match[1].split('-', 1)[0]);
+      return [
+        {
+          id: match[1],
+          uri: file.uri,
+          exportStatus: 'ready' as const,
+          deckId: 'recovered',
+          createdAt: Number.isFinite(createdAt) ? createdAt : file.creationTime ?? Date.now(),
+        },
+      ];
+    });
+  if (recovered.length > 0) {
+    logVideoDiagnostic('completed round videos recovered from device storage', {
+      recoveredCount: recovered.length,
+      recoveredFiles: recovered.map((video) => getManagedFileName(video.uri)),
+    });
+  }
+  return recovered;
 }
 
 function deleteVideoFiles(
