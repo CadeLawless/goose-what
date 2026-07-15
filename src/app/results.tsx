@@ -299,7 +299,7 @@ const styles = StyleSheet.create({
   title: { ...typography.hero, color: colors.ink, marginTop: spacing.sm },
   deckName: { color: colors.muted, fontSize: 16, fontWeight: '700', marginTop: spacing.sm },
   videoSection: { alignItems: 'center', marginTop: spacing.lg },
-  video: { width: 180, aspectRatio: 16 / 9, borderRadius: radius.lg },
+  video: { width: '100%', aspectRatio: 16 / 9, borderRadius: radius.lg },
   saveVideoButton: {
     minHeight: 42,
     marginTop: spacing.sm,
