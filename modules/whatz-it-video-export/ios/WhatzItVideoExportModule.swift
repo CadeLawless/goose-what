@@ -62,7 +62,7 @@ public final class WhatzItVideoExportModule: Module {
     Name("WhatzItVideoExport")
 
     Constant("overlayExportVersion") {
-      6
+      7
     }
 
     AsyncFunction("exportOverlayVideo") {
@@ -751,11 +751,11 @@ public final class WhatzItVideoExportModule: Module {
     guard headshot != nil || wordmark != nil else { return nil }
     let margin = renderSize.height * 0.035
     let gap = renderSize.height * 0.01
-    let headshotHeight = headshot == nil ? 0 : renderSize.height * 0.1
+    let headshotHeight = headshot == nil ? 0 : renderSize.height * 0.11
     let headshotWidth = headshot.map {
       headshotHeight * ($0.size.width / max(1, $0.size.height))
     } ?? 0
-    let wordmarkWidth = wordmark == nil ? 0 : renderSize.height * 0.2
+    let wordmarkWidth = wordmark == nil ? 0 : renderSize.height * 0.22
     let wordmarkHeight = wordmark.map {
       wordmarkWidth * ($0.size.height / max(1, $0.size.width))
     } ?? 0
