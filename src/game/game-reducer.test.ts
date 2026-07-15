@@ -6,6 +6,7 @@ import {
   clampRoundDuration,
   formatRoundClock,
   parseStoredRoundDuration,
+  serializeRoundDurationPreference,
 } from './round-duration';
 import { shuffle } from './shuffle';
 import {
@@ -112,6 +113,14 @@ describe('shuffle', () => {
 describe('round duration', () => {
   it('defaults to one minute when no preference has been saved', () => {
     assert.equal(parseStoredRoundDuration(null), 60);
+  });
+
+  it('resets legacy auto-saved timer values to the one-minute default', () => {
+    assert.equal(parseStoredRoundDuration('30'), 60);
+  });
+
+  it('restores an explicit timer choice saved with the current format', () => {
+    assert.equal(parseStoredRoundDuration(serializeRoundDurationPreference(30)), 30);
   });
 
   it('never allows a duration above five minutes', () => {
