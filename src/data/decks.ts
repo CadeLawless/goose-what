@@ -2871,6 +2871,7 @@ export const decks: Deck[] = [
     id: 'history-buff',
     title: 'History Buff',
     description: 'Legendary people, places, and moments that shaped history.',
+    coverImage: require('../../assets/images/decks/history-buff.png'),
     version: 1,
     cards: [
       { id: 'history-001', text: 'George Washington' },
@@ -3079,6 +3080,7 @@ export const decks: Deck[] = [
     id: 'kidding-around',
     title: 'Kidding Around',
     description: 'Kid-sized fun with animals, toys, treats, and more.',
+    coverImage: require('../../assets/images/decks/kidding-around.png'),
     version: 1,
     cards: [
       { id: 'kid-001', text: 'Puppy' },
