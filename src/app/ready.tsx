@@ -22,6 +22,7 @@ import {
 
 const GET_READY_SOUND_MS = 1050;
 const READY_TRANSITION_MS = 450;
+const ROUND_AUDIO_PLAYER_OPTIONS = { keepAudioSessionActive: true } as const;
 
 export default function ReadyScreen() {
   const { height } = useLandscapeDimensions();
@@ -47,10 +48,10 @@ export default function ReadyScreen() {
   const introStarted = useRef(false);
   const screenRef = useRef<View>(null);
   const { beginTransition, revealTransition } = useScreenshotTransition();
-  const getReadyPlayer = useAudioPlayer(getRoundSoundSource('get-ready'));
-  const count3Player = useAudioPlayer(getRoundSoundSource('count-3'));
-  const count2Player = useAudioPlayer(getRoundSoundSource('count-2'));
-  const count1Player = useAudioPlayer(getRoundSoundSource('count-1'));
+  const getReadyPlayer = useAudioPlayer(getRoundSoundSource('get-ready'), ROUND_AUDIO_PLAYER_OPTIONS);
+  const count3Player = useAudioPlayer(getRoundSoundSource('count-3'), ROUND_AUDIO_PLAYER_OPTIONS);
+  const count2Player = useAudioPlayer(getRoundSoundSource('count-2'), ROUND_AUDIO_PLAYER_OPTIONS);
+  const count1Player = useAudioPlayer(getRoundSoundSource('count-1'), ROUND_AUDIO_PLAYER_OPTIONS);
   const foreheadStatus = useForeheadPosition(round.status === 'ready');
   const positionReady = foreheadStatus === 'ready' || manualReady;
   const recordingPrepared =
@@ -84,7 +85,7 @@ export default function ReadyScreen() {
   useEffect(() => {
     if (!positionReady || !orientationSettled || !recordingPrepared || isLeaving || introStarted.current) return;
     introStarted.current = true;
-    void playRoundSound(getReadyPlayer);
+    void playRoundSound(getReadyPlayer, 'get-ready');
     const timeout = setTimeout(async () => {
       const started = await startRecording();
       if (recordingPreparation === 'ready' && !started) {
@@ -110,7 +111,10 @@ export default function ReadyScreen() {
     recordOverlayEvent({ kind: 'countdown', text: String(count) });
     const sound: RoundSoundId = count === 3 ? 'count-3' : count === 2 ? 'count-2' : 'count-1';
     recordSoundCue(sound);
-    void playRoundSound(count === 3 ? count3Player : count === 2 ? count2Player : count1Player);
+    void playRoundSound(
+      count === 3 ? count3Player : count === 2 ? count2Player : count1Player,
+      sound,
+    );
   }, [count, count1Player, count2Player, count3Player, introComplete, isLeaving, recordOverlayEvent, recordSoundCue]);
 
   useEffect(() => {

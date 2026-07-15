@@ -4,12 +4,9 @@ import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { captureRef } from 'react-native-view-shot';
 
-import {
-  ConfirmationPrompt,
-  type PromptOrientation,
-} from '@/components/confirmation-prompt';
+import { ConfirmationPrompt } from '@/components/confirmation-prompt';
 import { PortraitTransition } from '@/components/orientation-transition';
-import { RoundVideoPlayer } from '@/components/round-video-player';
+import { RoundVideoPlayer, type VideoSaveNotice } from '@/components/round-video-player';
 import { useScreenshotTransition } from '@/components/screenshot-transition-provider';
 import { getDeckById } from '@/data/decks';
 import { useRound } from '@/game/round-context';
@@ -29,7 +26,6 @@ export default function ResultsScreen() {
   const [saveNotice, setSaveNotice] = useState<{
     title: string;
     message: string;
-    orientation: PromptOrientation;
   } | null>(null);
   const screenRef = useRef<View>(null);
   const isPortrait = usePortraitScreen();
@@ -82,22 +78,27 @@ export default function ResultsScreen() {
     router.replace('/');
   };
 
-  const handleSaveVideo = async (orientation: PromptOrientation = 'portrait') => {
-    if (!currentVideo || !videoReady || isSavingVideo) return;
+  const handleSaveVideo = async (): Promise<VideoSaveNotice> => {
+    if (!currentVideo || !videoReady || isSavingVideo) {
+      return { title: 'Video not ready', message: 'Please wait for this video to finish exporting.' };
+    }
     setIsSavingVideo(true);
     try {
       await saveRoundVideoToDevice(currentVideo);
-      setSaveNotice({
+      return {
         title: 'Video saved',
         message: 'The round video and its sound are now in your device library.',
-        orientation,
-      });
+      };
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'Please try again.';
-      setSaveNotice({ title: 'Could not save video', message: detail, orientation });
+      return { title: 'Could not save video', message: detail };
     } finally {
       setIsSavingVideo(false);
     }
+  };
+
+  const handlePortraitSave = async () => {
+    setSaveNotice(await handleSaveVideo());
   };
 
   const requestDeleteVideo = () => {
@@ -150,14 +151,14 @@ export default function ResultsScreen() {
                   isSaving={isSavingVideo}
                   saveDisabled={!videoReady}
                   onDelete={requestDeleteVideo}
-                  onSave={(_, orientation) => handleSaveVideo(orientation)}
+                  onSave={handleSaveVideo}
                   video={currentVideo}
                   style={styles.video}
                 />
                 <Pressable
                   accessibilityRole="button"
                   disabled={isSavingVideo || !videoReady}
-                  onPress={() => void handleSaveVideo()}
+                  onPress={() => void handlePortraitSave()}
                   style={({ pressed }) => [
                     styles.saveVideoButton,
                     !videoReady && styles.disabled,
@@ -247,7 +248,6 @@ export default function ResultsScreen() {
         message={saveNotice?.message ?? ''}
         onCancel={() => setSaveNotice(null)}
         onConfirm={() => setSaveNotice(null)}
-        orientation={saveNotice?.orientation}
         title={saveNotice?.title ?? ''}
         visible={saveNotice !== null}
       />

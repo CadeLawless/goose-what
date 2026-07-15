@@ -20,13 +20,10 @@ import Animated, {
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import {
-  ConfirmationPrompt,
-  type PromptOrientation,
-} from '@/components/confirmation-prompt';
+import { ConfirmationPrompt } from '@/components/confirmation-prompt';
 import { DeckCard } from '@/components/deck-card';
 import { PortraitTransition } from '@/components/orientation-transition';
-import { RoundVideoPlayer } from '@/components/round-video-player';
+import { RoundVideoPlayer, type VideoSaveNotice } from '@/components/round-video-player';
 import { useScreenshotTransition } from '@/components/screenshot-transition-provider';
 import { decks, getDeckById } from '@/data/decks';
 import { usePortraitScreen } from '@/hooks/use-portrait-screen';
@@ -53,7 +50,6 @@ export default function DeckLibraryScreen() {
   const [saveNotice, setSaveNotice] = useState<{
     title: string;
     message: string;
-    orientation: PromptOrientation;
   } | null>(null);
   const pageWidth = Math.min(width, 720);
   const horizontalPadding = width < 380 ? 22 : Math.min(48, Math.round(width * 0.074));
@@ -90,25 +86,27 @@ export default function DeckLibraryScreen() {
     }, []),
   );
 
-  const handleSave = async (
-    video: RoundVideo,
-    orientation: PromptOrientation = 'portrait',
-  ) => {
-    if (savingVideoId || !isRoundVideoReadyToSave(video)) return;
+  const handleSave = async (video: RoundVideo): Promise<VideoSaveNotice> => {
+    if (savingVideoId || !isRoundVideoReadyToSave(video)) {
+      return { title: 'Video not ready', message: 'Please wait for this video to finish exporting.' };
+    }
     setSavingVideoId(video.id);
     try {
       await saveRoundVideoToDevice(video);
-      setSaveNotice({
+      return {
         title: 'Video saved',
         message: 'The round video and its sound are now in your device library.',
-        orientation,
-      });
+      };
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'Please try again.';
-      setSaveNotice({ title: 'Could not save video', message: detail, orientation });
+      return { title: 'Could not save video', message: detail };
     } finally {
       setSavingVideoId(null);
     }
+  };
+
+  const handlePortraitSave = async (video: RoundVideo) => {
+    setSaveNotice(await handleSave(video));
   };
 
   const handleDelete = (video: RoundVideo) => {
@@ -237,7 +235,7 @@ export default function DeckLibraryScreen() {
                             disabled: savingVideoId !== null || !isRoundVideoReadyToSave(video),
                           }}
                           disabled={savingVideoId !== null || !isRoundVideoReadyToSave(video)}
-                          onPress={() => handleSave(video)}
+                          onPress={() => void handlePortraitSave(video)}
                           style={({ pressed }) => [
                             styles.saveButton,
                             !isRoundVideoReadyToSave(video) && styles.disabled,
@@ -290,7 +288,6 @@ export default function DeckLibraryScreen() {
         message={saveNotice?.message ?? ''}
         onCancel={() => setSaveNotice(null)}
         onConfirm={() => setSaveNotice(null)}
-        orientation={saveNotice?.orientation}
         title={saveNotice?.title ?? ''}
         visible={saveNotice !== null}
       />

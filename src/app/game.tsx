@@ -27,6 +27,7 @@ import { colors, radius, spacing, typography } from '@/theme';
 import { getRoundSoundSource, playRoundSound, preloadRoundSounds } from '@/video/round-sounds';
 
 const ROUND_END_SCREEN_MS = 1000;
+const ROUND_AUDIO_PLAYER_OPTIONS = { keepAudioSessionActive: true } as const;
 
 export default function GameScreen() {
   useKeepAwake();
@@ -38,11 +39,11 @@ export default function GameScreen() {
   const finishSoundPlayed = useRef(false);
   const screenRef = useRef<View>(null);
   const resultsTransitionStarted = useRef(false);
-  const roundStartPlayer = useAudioPlayer(getRoundSoundSource('round-start'));
-  const finalTickPlayer = useAudioPlayer(getRoundSoundSource('final-tick'));
-  const correctPlayer = useAudioPlayer(getRoundSoundSource('correct'));
-  const passPlayer = useAudioPlayer(getRoundSoundSource('pass'));
-  const roundEndPlayer = useAudioPlayer(getRoundSoundSource('round-end'));
+  const roundStartPlayer = useAudioPlayer(getRoundSoundSource('round-start'), ROUND_AUDIO_PLAYER_OPTIONS);
+  const finalTickPlayer = useAudioPlayer(getRoundSoundSource('final-tick'), ROUND_AUDIO_PLAYER_OPTIONS);
+  const correctPlayer = useAudioPlayer(getRoundSoundSource('correct'), ROUND_AUDIO_PLAYER_OPTIONS);
+  const passPlayer = useAudioPlayer(getRoundSoundSource('pass'), ROUND_AUDIO_PLAYER_OPTIONS);
+  const roundEndPlayer = useAudioPlayer(getRoundSoundSource('round-end'), ROUND_AUDIO_PLAYER_OPTIONS);
   const router = useRouter();
   const { beginTransition } = useScreenshotTransition();
   const {
@@ -73,11 +74,11 @@ export default function GameScreen() {
     (outcome: 'correct' | 'passed') => {
       if (outcome === 'correct') {
         recordSoundCue('correct');
-        void playRoundSound(correctPlayer);
+        void playRoundSound(correctPlayer, 'correct');
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
       } else {
         recordSoundCue('pass');
-        void playRoundSound(passPlayer);
+        void playRoundSound(passPlayer, 'pass');
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
       }
       answerCard(outcome);
@@ -113,7 +114,7 @@ export default function GameScreen() {
     if (round.status !== 'ready' || startSoundPlayed.current) return;
     startSoundPlayed.current = true;
     recordSoundCue('round-start');
-    void playRoundSound(roundStartPlayer);
+    void playRoundSound(roundStartPlayer, 'round-start');
   }, [recordSoundCue, round.status, roundStartPlayer]);
 
   useEffect(() => {
@@ -133,7 +134,7 @@ export default function GameScreen() {
     if (lastTickSecond.current === remainingSeconds) return;
     lastTickSecond.current = remainingSeconds;
     recordSoundCue('final-tick');
-    void playRoundSound(finalTickPlayer);
+    void playRoundSound(finalTickPlayer, 'final-tick');
   }, [finalTickPlayer, recordSoundCue, remainingSeconds, round.status]);
 
   useEffect(() => {
@@ -162,7 +163,7 @@ export default function GameScreen() {
     if (!finishSoundPlayed.current) {
       finishSoundPlayed.current = true;
       recordSoundCue('round-end');
-      void playRoundSound(roundEndPlayer);
+      void playRoundSound(roundEndPlayer, 'round-end');
     }
     if (resultsTransitionStarted.current) return;
     resultsTransitionStarted.current = true;

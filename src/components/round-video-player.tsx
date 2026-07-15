@@ -14,17 +14,23 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { ConfirmationPrompt } from '@/components/confirmation-prompt';
 import { LandscapeViewport } from '@/components/landscape-viewport';
-import type { PromptOrientation } from '@/components/confirmation-prompt';
 import { colors, radius, spacing } from '@/theme';
 import type { RoundVideo, RoundVideoEvent } from '@/video/round-videos';
+import { logVideoDiagnostic } from '@/video/video-diagnostics';
+
+export type VideoSaveNotice = {
+  title: string;
+  message: string;
+};
 
 type RoundVideoPlayerProps = {
   video: RoundVideo;
   style?: StyleProp<ViewStyle>;
   isSaving?: boolean;
   saveDisabled?: boolean;
-  onSave?: (video: RoundVideo, orientation: PromptOrientation) => void | Promise<void>;
+  onSave?: (video: RoundVideo) => Promise<VideoSaveNotice>;
   onDelete?: (video: RoundVideo) => void;
 };
 
@@ -38,6 +44,7 @@ export function RoundVideoPlayer({
 }: RoundVideoPlayerProps) {
   const insets = useSafeAreaInsets();
   const [expanded, setExpanded] = useState(false);
+  const [saveNotice, setSaveNotice] = useState<VideoSaveNotice | null>(null);
   const expandedRef = useRef(false);
   const previousVideoTime = useRef(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -76,6 +83,17 @@ export function RoundVideoPlayer({
     }
   });
 
+  useEventListener(player, 'sourceLoad', ({ availableAudioTracks, videoSource }) => {
+    logVideoDiagnostic('player source loaded', {
+      audioTrackCount: availableAudioTracks.length,
+      audioTracks: availableAudioTracks,
+      exportUri: video.exportUri,
+      playbackUri,
+      separateAudioUri,
+      videoSource,
+    });
+  });
+
   const event = useMemo(
     () => getEventAtTime(video.events ?? [], currentTime * 1000),
     [currentTime, video.events],
@@ -111,6 +129,12 @@ export function RoundVideoPlayer({
     onDelete(video);
   };
 
+  const saveFromPlayer = async () => {
+    if (!onSave || isSaving || saveDisabled) return;
+    const notice = await onSave(video);
+    setSaveNotice(notice);
+  };
+
   return (
     <>
       {!expanded && (
@@ -135,7 +159,7 @@ export function RoundVideoPlayer({
 
       <Modal
         animationType="fade"
-        onRequestClose={closeExpanded}
+        onRequestClose={() => (saveNotice ? setSaveNotice(null) : closeExpanded())}
         statusBarTranslucent
         supportedOrientations={['portrait', 'landscape', 'landscape-left', 'landscape-right']}
         visible={expanded}
@@ -163,7 +187,7 @@ export function RoundVideoPlayer({
                   accessibilityRole="button"
                   accessibilityState={{ busy: isSaving, disabled: isSaving || saveDisabled }}
                   disabled={isSaving || saveDisabled}
-                  onPress={() => void onSave(video, 'landscape')}
+                  onPress={() => void saveFromPlayer()}
                   style={({ pressed }) => [
                     styles.playerActionButton,
                     styles.downloadButton,
@@ -207,6 +231,16 @@ export function RoundVideoPlayer({
           >
             <Text style={styles.closeText}>×</Text>
           </Pressable>
+          <ConfirmationPrompt
+            cancelLabel={null}
+            confirmLabel="OK"
+            embedded
+            message={saveNotice?.message ?? ''}
+            onCancel={() => setSaveNotice(null)}
+            onConfirm={() => setSaveNotice(null)}
+            title={saveNotice?.title ?? ''}
+            visible={saveNotice !== null}
+          />
           </View>
         </LandscapeViewport>
       </Modal>

@@ -1,6 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
+import { logVideoDiagnostic, warnVideoDiagnostic } from '@/video/video-diagnostics';
+
 const STORAGE_KEY = 'whatz-it:round-videos:v1';
 const MAX_STORED_VIDEOS = 10;
 const VIDEO_DIRECTORY_NAME = 'round-videos';
@@ -106,6 +108,18 @@ export async function storeRoundVideo(
     audioUri = audioDestination.uri;
   }
 
+  logVideoDiagnostic('round files persisted', {
+    audioDestinationExists: audioUri ? new File(audioUri).exists : false,
+    audioDestinationSize: audioUri ? new File(audioUri).size : 0,
+    audioUri,
+    sourceAudioExists: temporaryAudioUri ? new File(temporaryAudioUri).exists : false,
+    sourceAudioSize: temporaryAudioUri ? new File(temporaryAudioUri).size : 0,
+    sourceAudioUri: temporaryAudioUri,
+    videoDestinationExists: destination.exists,
+    videoDestinationSize: destination.size,
+    videoUri: destination.uri,
+  });
+
   const video: RoundVideo = {
     id,
     uri: destination.uri,
@@ -163,7 +177,26 @@ export async function saveRoundVideoToDevice(video: RoundVideo) {
   if (!permission.granted) throw new Error('Media library permission was not granted.');
   const saveUri = video.events?.length ? video.exportUri : video.uri;
   if (!saveUri) throw new Error('This video is still being prepared.');
+  const { File } = await import('expo-file-system');
+  const saveFile = new File(saveUri);
+  const saveAudioTrackCount = await inspectVideoAudioTrackCount(saveUri);
+  logVideoDiagnostic('media library save started', {
+    audioUri: video.audioUri,
+    exportIncludesOverlays: video.exportIncludesOverlays,
+    exportUri: video.exportUri,
+    saveFileExists: saveFile.exists,
+    saveFileSize: saveFile.size,
+    saveAudioTrackCount,
+    saveUri,
+    sourceVideoUri: video.uri,
+  });
+  if (video.audioUri && saveAudioTrackCount === 0) {
+    throw new Error(
+      'The exported video has no audio track, so it was not saved. Please send the [RoundVideo] terminal logs so this can be diagnosed.',
+    );
+  }
   await Asset.create(saveUri);
+  logVideoDiagnostic('media library save completed', { saveUri });
 }
 
 async function prepareRoundVideoExportOnce(video: RoundVideo): Promise<RoundVideo> {
@@ -190,6 +223,19 @@ async function prepareRoundVideoExportOnce(video: RoundVideo): Promise<RoundVide
     // exporter arrives in the eventual production build.
     const exportEvents =
       Platform.OS === 'ios' && !supportsFixedIosOverlayExport() ? [] : video.events;
+    const audioFile = video.audioUri ? new File(video.audioUri) : null;
+    const sourceVideoFile = new File(video.uri);
+    logVideoDiagnostic('native export started', {
+      audioFileExists: audioFile?.exists ?? false,
+      audioFileSize: audioFile?.size ?? 0,
+      audioUri: video.audioUri,
+      exportEventCount: exportEvents.length,
+      sourceEventCount: video.events.length,
+      sourceVideoExists: sourceVideoFile.exists,
+      sourceVideoSize: sourceVideoFile.size,
+      sourceVideoUri: video.uri,
+      supportsFixedIosOverlays: supportsFixedIosOverlayExport(),
+    });
     temporaryExportUri = await exportOverlayVideo(
       video.uri,
       video.audioUri ?? null,
@@ -200,13 +246,29 @@ async function prepareRoundVideoExportOnce(video: RoundVideo): Promise<RoundVide
     const destination = new File(videoDirectory, `${video.id}-export.mp4`);
     if (destination.exists) destination.delete();
     await new File(temporaryExportUri).copy(destination);
+    const exportedAudioTrackCount = await inspectVideoAudioTrackCount(destination.uri);
+    logVideoDiagnostic('native export completed', {
+      destinationExists: destination.exists,
+      destinationSize: destination.size,
+      destinationUri: destination.uri,
+      exportedAudioTrackCount,
+      temporaryExportUri,
+    });
+    if (video.audioUri && exportedAudioTrackCount === 0) {
+      throw new Error('The native exporter returned a video with no audio track.');
+    }
     return updateStoredVideo({
       ...video,
       exportUri: destination.uri,
       exportIncludesOverlays: exportEvents.length > 0,
       exportStatus: 'ready',
     });
-  } catch {
+  } catch (error) {
+    warnVideoDiagnostic('native export failed', error, {
+      audioUri: video.audioUri,
+      sourceVideoUri: video.uri,
+      temporaryExportUri,
+    });
     return updateStoredVideo({
       ...video,
       exportUri: undefined,
@@ -218,6 +280,59 @@ async function prepareRoundVideoExportOnce(video: RoundVideo): Promise<RoundVide
       const temporaryFile = new File(temporaryExportUri);
       if (temporaryFile.exists) temporaryFile.delete();
     }
+  }
+}
+
+async function inspectVideoAudioTrackCount(uri: string): Promise<number | null> {
+  const { createVideoPlayer } = await import('expo-video');
+  const player = createVideoPlayer(uri);
+
+  try {
+    return await new Promise<number | null>((resolve) => {
+      let settled = false;
+      const cleanup: (() => void)[] = [];
+      const finish = (audioTrackCount: number | null) => {
+        if (settled) return;
+        settled = true;
+        cleanup.forEach((remove) => remove());
+        resolve(audioTrackCount);
+      };
+
+      const sourceSubscription = player.addListener(
+        'sourceLoad',
+        ({ availableAudioTracks, duration, videoSource }) => {
+          logVideoDiagnostic('video audio tracks inspected', {
+            audioTrackCount: availableAudioTracks.length,
+            audioTracks: availableAudioTracks,
+            duration,
+            uri,
+            videoSource,
+          });
+          finish(availableAudioTracks.length);
+        },
+      );
+      cleanup.push(() => sourceSubscription.remove());
+
+      const statusSubscription = player.addListener('statusChange', ({ error, status }) => {
+        if (status !== 'error') return;
+        warnVideoDiagnostic('video audio track inspection failed', error?.message ?? status, {
+          uri,
+        });
+        finish(null);
+      });
+      cleanup.push(() => statusSubscription.remove());
+
+      const timeout = setTimeout(() => {
+        warnVideoDiagnostic('video audio track inspection timed out', 'Metadata did not load.', {
+          status: player.status,
+          uri,
+        });
+        finish(null);
+      }, 5000);
+      cleanup.push(() => clearTimeout(timeout));
+    });
+  } finally {
+    player.release();
   }
 }
 

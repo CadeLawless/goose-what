@@ -14,6 +14,7 @@ type ConfirmationPromptProps = {
   busyLabel?: string;
   busy?: boolean;
   destructive?: boolean;
+  embedded?: boolean;
   orientation?: PromptOrientation;
   onCancel: () => void;
   onConfirm: () => void;
@@ -28,6 +29,7 @@ export function ConfirmationPrompt({
   busyLabel = 'WORKING...',
   busy = false,
   destructive = false,
+  embedded = false,
   orientation = 'portrait',
   onCancel,
   onConfirm,
@@ -35,7 +37,7 @@ export function ConfirmationPrompt({
   if (!visible) return null;
 
   const prompt = (
-    <View accessibilityViewIsModal style={styles.overlay}>
+    <View accessibilityViewIsModal style={[styles.overlay, embedded && styles.embeddedOverlay]}>
       <Pressable
         accessibilityLabel="Dismiss confirmation"
         accessibilityRole="button"
@@ -82,6 +84,8 @@ export function ConfirmationPrompt({
     </View>
   );
 
+  if (embedded) return prompt;
+
   return (
     <Modal
       animationType="fade"
@@ -109,6 +113,7 @@ const styles = StyleSheet.create({
     padding: spacing.xl,
     backgroundColor: 'rgba(24, 35, 29, 0.48)',
   },
+  embeddedOverlay: StyleSheet.absoluteFill,
   card: {
     width: '100%',
     maxWidth: 440,

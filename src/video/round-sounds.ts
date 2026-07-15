@@ -1,6 +1,8 @@
 import { Asset } from 'expo-asset';
 import type { AudioPlayer } from 'expo-audio';
 
+import { logVideoDiagnostic, warnVideoDiagnostic } from '@/video/video-diagnostics';
+
 export type RoundSoundId =
   | 'get-ready'
   | 'count-3'
@@ -39,11 +41,13 @@ export function preloadRoundSounds(sounds: RoundSoundId[]) {
   return Promise.all(sounds.map(resolveRoundSoundUri));
 }
 
-export async function playRoundSound(player: AudioPlayer) {
+export async function playRoundSound(player: AudioPlayer, sound: RoundSoundId) {
   try {
     await player.seekTo(0);
     player.play();
-  } catch {
+    logVideoDiagnostic('round cue playback started', { sound });
+  } catch (error) {
+    warnVideoDiagnostic('round cue playback failed', error, { sound });
     // A cue should never interrupt the round if the device cannot play it.
   }
 }

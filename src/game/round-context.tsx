@@ -33,6 +33,7 @@ import {
   type RoundSoundId,
   type RoundVideoSoundCue,
 } from '@/video/round-sounds';
+import { logVideoDiagnostic, warnVideoDiagnostic } from '@/video/video-diagnostics';
 
 export type RecordingPreparation = 'ready' | 'permission-denied' | 'unavailable' | 'error';
 
@@ -173,6 +174,13 @@ export function RoundProvider({ children }: PropsWithChildren) {
         const capture = await cameraRef.current?.stopRecording();
         if (!capture) return null;
 
+        logVideoDiagnostic('round capture received', {
+          eventCount: events.length,
+          microphoneOffsetMs: capture.microphoneOffsetMs,
+          microphoneUri: capture.microphoneUri,
+          videoUri: capture.videoUri,
+        });
+
         // The microphone naturally captures the audible round cues. Mixing the cue
         // files in again makes every game sound play twice.
         const temporaryAudioUri = capture.microphoneUri;
@@ -190,7 +198,8 @@ export function RoundProvider({ children }: PropsWithChildren) {
           temporaryAudioUri,
         ]);
         return video;
-      } catch {
+      } catch (error) {
+        warnVideoDiagnostic('round video storage failed', error);
         return null;
       } finally {
         stoppingPromise.current = null;

@@ -9,6 +9,8 @@ import {
   useVideoOutput,
 } from 'react-native-vision-camera';
 
+import { logVideoDiagnostic, warnVideoDiagnostic } from '@/video/video-diagnostics';
+
 export type RoundCameraRef = {
   startRecording: (maxDuration: number) => Promise<number | null>;
   stopRecording: () => Promise<RoundCapture | null>;
@@ -37,6 +39,12 @@ export async function requestRoundCameraPermissions() {
   const microphoneGranted =
     VisionCamera.microphonePermissionStatus === 'authorized' ||
     (await VisionCamera.requestMicrophonePermission());
+  logVideoDiagnostic('permissions resolved', {
+    cameraGranted,
+    cameraStatus: VisionCamera.cameraPermissionStatus,
+    microphoneGranted,
+    microphoneStatus: VisionCamera.microphonePermissionStatus,
+  });
   return { cameraGranted: true, microphoneGranted };
 }
 
@@ -61,21 +69,31 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
     });
     const recorderRef = useRef<Recorder | null>(null);
     const resultPromiseRef = useRef<Promise<string> | null>(null);
-    const microphoneRef = useRef<{ offsetMs: number } | null>(null);
+    const microphoneRef = useRef<{ uri: string; offsetMs: number } | null>(null);
     const microphonePreparedRef = useRef(false);
 
     const prepareMicrophone = useCallback(async () => {
       if (Platform.OS !== 'ios' || !microphoneEnabled) return microphoneEnabled;
       if (microphonePreparedRef.current) return true;
       try {
+        logVideoDiagnostic('microphone preparation started', {
+          statusBefore: microphoneRecorder.getStatus(),
+        });
         await prepareRoundRecordingAudio();
         if (!microphoneRecorder.getStatus().canRecord) {
           await microphoneRecorder.prepareToRecordAsync();
         }
         microphonePreparedRef.current = true;
+        logVideoDiagnostic('microphone preparation completed', {
+          statusAfter: microphoneRecorder.getStatus(),
+          uri: microphoneRecorder.uri,
+        });
         return true;
       } catch (error) {
-        console.warn('Microphone preparation failed; recording video without audio.', error);
+        warnVideoDiagnostic('microphone preparation failed', error, {
+          status: microphoneRecorder.getStatus(),
+          uri: microphoneRecorder.uri,
+        });
         return false;
       }
     }, [microphoneEnabled, microphoneRecorder]);
@@ -87,6 +105,10 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
           if (!enabled || !device || recorderRef.current) return null;
           let recorder: Recorder | null = null;
           try {
+            logVideoDiagnostic('recording start requested', {
+              microphoneEnabled,
+              platform: Platform.OS,
+            });
             let microphonePrepared = await prepareMicrophone();
             if (microphonePrepared && Platform.OS !== 'ios') {
               try {
@@ -110,17 +132,31 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
             if (Platform.OS === 'ios' && microphonePrepared) {
               try {
                 microphoneRecorder.record();
+                const microphoneUri = microphoneRecorder.uri;
+                if (!microphoneRecorder.isRecording || !microphoneUri) {
+                  throw new Error('The prepared microphone recorder did not enter recording state.');
+                }
                 microphoneRef.current = {
+                  uri: microphoneUri,
                   offsetMs: Math.max(0, Date.now() - videoStartedAt),
                 };
+                logVideoDiagnostic('microphone recording started', {
+                  offsetMs: microphoneRef.current.offsetMs,
+                  status: microphoneRecorder.getStatus(),
+                  uri: microphoneUri,
+                });
               } catch (error) {
                 // A microphone failure must not discard an otherwise valid video.
-                console.warn('Microphone recording failed; continuing with video only.', error);
+                warnVideoDiagnostic('microphone recording failed; continuing with video only', error, {
+                  status: microphoneRecorder.getStatus(),
+                  uri: microphoneRecorder.uri,
+                });
               }
             }
+            logVideoDiagnostic('video recording started', { videoStartedAt });
             return videoStartedAt;
           } catch (error) {
-            console.warn('Video recording failed to start.', error);
+            warnVideoDiagnostic('video recording failed to start', error);
             try {
               if (recorder?.isRecording) await recorder.cancelRecording();
             } catch {
@@ -145,14 +181,32 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
           const result = resultPromiseRef.current;
           if (!recorder || !result) return null;
           try {
+            logVideoDiagnostic('recording stop requested', {
+              microphoneStatus: microphoneRecorder.getStatus(),
+              microphoneUri: microphoneRef.current?.uri,
+              videoRecorderActive: recorder.isRecording,
+            });
             if (recorder.isRecording) await recorder.stopRecording();
             let microphoneUri: string | undefined;
             if (Platform.OS === 'ios' && microphoneRef.current) {
               await microphoneRecorder.stop();
-              microphoneUri = microphoneRecorder.uri ?? undefined;
+              microphoneUri = microphoneRef.current.uri;
             }
+            const videoUri = await result;
+            const { File } = await import('expo-file-system');
+            const microphoneFile = microphoneUri ? new File(microphoneUri) : null;
+            const videoFile = new File(videoUri);
+            logVideoDiagnostic('recording stopped', {
+              microphoneFileExists: microphoneFile?.exists ?? false,
+              microphoneFileSize: microphoneFile?.size ?? 0,
+              microphoneStatus: microphoneRecorder.getStatus(),
+              microphoneUri,
+              videoFileExists: videoFile.exists,
+              videoFileSize: videoFile.size,
+              videoUri,
+            });
             return {
-              videoUri: await result,
+              videoUri,
               microphoneUri,
               microphoneOffsetMs: microphoneRef.current?.offsetMs ?? 0,
             };
@@ -190,7 +244,7 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
           }
         },
       }),
-      [device, enabled, microphoneRecorder, prepareMicrophone, videoOutput],
+      [device, enabled, microphoneEnabled, microphoneRecorder, prepareMicrophone, videoOutput],
     );
 
     if (!enabled || !device) return null;
