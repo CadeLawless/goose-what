@@ -22,6 +22,12 @@ private struct OverlayTimerSegment {
   let text: String
 }
 
+private struct OverlayTimelineFrame {
+  let start: Double
+  let frame: CGRect
+  let image: CGImage
+}
+
 private enum VideoExportError: Error, LocalizedError {
   case missingVideoTrack
   case missingAudioTrack
@@ -67,7 +73,7 @@ public final class WhatzItVideoExportModule: Module {
     Name("WhatzItVideoExport")
 
     Constant("overlayExportVersion") {
-      8
+      9
     }
 
     AsyncFunction("exportOverlayVideo") {
@@ -526,6 +532,7 @@ public final class WhatzItVideoExportModule: Module {
     }
 
     let orderedEvents = events.sorted { $0.atMs < $1.atMs }
+    var overlayFrames: [OverlayTimelineFrame] = []
     for (index, event) in orderedEvents.enumerated() {
       let start = max(0, event.atMs / 1_000)
       let nextStart = index + 1 < orderedEvents.count
@@ -553,15 +560,20 @@ public final class WhatzItVideoExportModule: Module {
           segmentStart = segmentEnd
         }
       }
-      // Keep one layer per event. Creating a layer for every timer second leaves
-      // completed Core Animation layers visible in some AVFoundation exports.
-      parentLayer.addSublayer(makeOverlayLayer(
+      overlayFrames.append(contentsOf: makeOverlayFrames(
         event: event,
         timerSegments: timerSegments,
         renderSize: renderSize,
         start: start,
-        duration: nextStart - start
       ))
+    }
+
+    // Keep every state on one native layer so a new card replaces the old one.
+    if let overlayLayer = makeOverlayTimelineLayer(
+      frames: overlayFrames,
+      durationSeconds: durationSeconds
+    ) {
+      parentLayer.addSublayer(overlayLayer)
     }
 
     return AVVideoCompositionCoreAnimationTool(
@@ -570,13 +582,12 @@ public final class WhatzItVideoExportModule: Module {
     )
   }
 
-  private static func makeOverlayLayer(
+  private static func makeOverlayFrames(
     event: VideoOverlayEventRecord,
     timerSegments: [OverlayTimerSegment],
     renderSize: CGSize,
-    start: Double,
-    duration: Double
-  ) -> CALayer {
+    start: Double
+  ) -> [OverlayTimelineFrame] {
     let text = event.text
       .split(whereSeparator: { $0.isWhitespace })
       .joined(separator: " ")
@@ -597,7 +608,7 @@ public final class WhatzItVideoExportModule: Module {
     if !timerSegments.isEmpty {
       let font = UIFont.systemFont(ofSize: renderSize.height * 0.028, weight: .bold)
       timerFont = font
-      timerSize = timerSegments.reduce(.zero) { largest, segment in
+      timerSize = timerSegments.reduce(CGSize.zero) { largest, segment in
         let size = (segment.text as NSString).size(withAttributes: [.font: font])
         return CGSize(width: max(largest.width, size.width), height: max(largest.height, size.height))
       }
@@ -615,8 +626,7 @@ public final class WhatzItVideoExportModule: Module {
     let contentHeight = font.lineHeight + (timerFont?.lineHeight ?? 0) + timerSpacing
     let height = max(minimumHeight, ceil(contentHeight) + verticalPadding * 2)
     let margin = renderSize.height * 0.133
-    let container = CALayer()
-    container.frame = CGRect(
+    let frame = CGRect(
       x: (renderSize.width - width) / 2,
       y: renderSize.height - height - margin,
       width: width,
@@ -635,40 +645,91 @@ public final class WhatzItVideoExportModule: Module {
         horizontalPadding: horizontalPadding
       )
     }
-    container.contents = makeImage(timerSegments.first?.text)
-    container.contentsGravity = .resize
-    container.opacity = 0
+    if timerSegments.isEmpty {
+      guard let image = makeImage(nil) else { return [] }
+      return [OverlayTimelineFrame(start: start, frame: frame, image: image)]
+    }
+    return timerSegments.compactMap { segment in
+      guard let image = makeImage(segment.text) else { return nil }
+      return OverlayTimelineFrame(start: start + segment.start, frame: frame, image: image)
+    }
+  }
 
-    if timerSegments.count > 1 {
-      var frames = timerSegments.compactMap { segment -> (time: NSNumber, image: CGImage)? in
-        guard let image = makeImage(segment.text) else { return nil }
-        let normalizedTime = min(1, max(0, segment.start / duration))
-        return (NSNumber(value: normalizedTime), image)
-      }
-      if frames.count > 1, let lastFrame = frames.last {
-        frames.append((NSNumber(value: 1), lastFrame.image))
-        let timerAnimation = CAKeyframeAnimation(keyPath: "contents")
-        timerAnimation.beginTime = AVCoreAnimationBeginTimeAtZero + start
-        timerAnimation.duration = duration
-        timerAnimation.values = frames.map { $0.image as Any }
-        timerAnimation.keyTimes = frames.map { $0.time }
-        timerAnimation.calculationMode = .discrete
-        timerAnimation.fillMode = .both
-        timerAnimation.isRemovedOnCompletion = false
-        container.add(timerAnimation, forKey: "timerContents")
+  private static func makeOverlayTimelineLayer(
+    frames: [OverlayTimelineFrame],
+    durationSeconds: Double
+  ) -> CALayer? {
+    guard durationSeconds > 0 else { return nil }
+    let orderedFrames = frames.sorted { $0.start < $1.start }
+    guard let firstFrame = orderedFrames.first else { return nil }
+
+    var states: [(frame: OverlayTimelineFrame, visible: Bool)] = []
+    func appendState(_ frame: OverlayTimelineFrame, visible: Bool) {
+      if let lastIndex = states.indices.last,
+         abs(states[lastIndex].frame.start - frame.start) < 0.000_001 {
+        states[lastIndex] = (frame, visible)
+      } else {
+        states.append((frame, visible))
       }
     }
 
-    let visibility = CAKeyframeAnimation(keyPath: "opacity")
-    visibility.beginTime = AVCoreAnimationBeginTimeAtZero + start
-    visibility.duration = duration
-    visibility.values = [0, 1, 0]
-    visibility.keyTimes = [0, 0.001, 0.999]
-    visibility.calculationMode = .discrete
-    visibility.fillMode = .both
-    visibility.isRemovedOnCompletion = false
-    container.add(visibility, forKey: "visibility")
-    return container
+    if firstFrame.start > 0 {
+      appendState(
+        OverlayTimelineFrame(start: 0, frame: firstFrame.frame, image: firstFrame.image),
+        visible: false
+      )
+    }
+    for frame in orderedFrames {
+      appendState(frame, visible: true)
+    }
+    if let lastFrame = states.last?.frame {
+      appendState(
+        OverlayTimelineFrame(
+          start: durationSeconds,
+          frame: lastFrame.frame,
+          image: lastFrame.image
+        ),
+        visible: false
+      )
+    }
+
+    guard let firstState = states.first else { return nil }
+    let layer = CALayer()
+    layer.bounds = CGRect(origin: .zero, size: firstState.frame.frame.size)
+    layer.position = CGPoint(x: firstState.frame.frame.midX, y: firstState.frame.frame.midY)
+    layer.contents = firstState.frame.image
+    layer.contentsGravity = .resize
+    layer.opacity = firstState.visible ? 1 : 0
+
+    let keyTimes = states.map {
+      NSNumber(value: min(1, max(0, $0.frame.start / durationSeconds)))
+    }
+    let contents = CAKeyframeAnimation(keyPath: "contents")
+    contents.values = states.map { $0.frame.image as Any }
+    let bounds = CAKeyframeAnimation(keyPath: "bounds")
+    bounds.values = states.map {
+      NSValue(cgRect: CGRect(origin: .zero, size: $0.frame.frame.size))
+    }
+    let position = CAKeyframeAnimation(keyPath: "position")
+    position.values = states.map {
+      NSValue(cgPoint: CGPoint(x: $0.frame.frame.midX, y: $0.frame.frame.midY))
+    }
+    let opacity = CAKeyframeAnimation(keyPath: "opacity")
+    opacity.values = states.map { NSNumber(value: $0.visible ? 1 : 0) }
+
+    for animation in [contents, bounds, position, opacity] {
+      animation.beginTime = AVCoreAnimationBeginTimeAtZero
+      animation.duration = durationSeconds
+      animation.keyTimes = keyTimes
+      animation.calculationMode = .discrete
+      animation.fillMode = .both
+      animation.isRemovedOnCompletion = false
+    }
+    layer.add(contents, forKey: "overlayContents")
+    layer.add(bounds, forKey: "overlayBounds")
+    layer.add(position, forKey: "overlayPosition")
+    layer.add(opacity, forKey: "overlayOpacity")
+    return layer
   }
 
   private static func makeOverlayImage(
@@ -783,11 +844,11 @@ public final class WhatzItVideoExportModule: Module {
     guard headshot != nil || wordmark != nil else { return nil }
     let margin = renderSize.height * 0.035
     let gap = renderSize.height * 0.01
-    let headshotHeight = headshot == nil ? 0 : renderSize.height * 0.12
+    let headshotHeight = headshot == nil ? 0 : renderSize.height * 0.144
     let headshotWidth = headshot.map {
       headshotHeight * ($0.size.width / max(1, $0.size.height))
     } ?? 0
-    let wordmarkWidth = wordmark == nil ? 0 : renderSize.height * 0.24
+    let wordmarkWidth = wordmark == nil ? 0 : renderSize.height * 0.288
     let wordmarkHeight = wordmark.map {
       wordmarkWidth * ($0.size.height / max(1, $0.size.width))
     } ?? 0

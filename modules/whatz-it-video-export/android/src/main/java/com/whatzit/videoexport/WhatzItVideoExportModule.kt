@@ -219,11 +219,11 @@ private class TimedCardOverlay(
     val canvasHeight = canvas.height.toFloat()
     val margin = canvasHeight * 0.035f
     val gap = canvasHeight * 0.01f
-    val headshotHeight = if (headshot == null) 0f else canvasHeight * 0.12f
+    val headshotHeight = if (headshot == null) 0f else canvasHeight * 0.144f
     val headshotWidth = headshot?.let {
       headshotHeight * it.width.toFloat() / max(1, it.height).toFloat()
     } ?: 0f
-    val wordmarkWidth = if (wordmark == null) 0f else canvasHeight * 0.24f
+    val wordmarkWidth = if (wordmark == null) 0f else canvasHeight * 0.288f
     val wordmarkHeight = wordmark?.let {
       wordmarkWidth * it.height.toFloat() / max(1, it.width).toFloat()
     } ?: 0f
