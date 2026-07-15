@@ -823,7 +823,7 @@ const styles = StyleSheet.create({
     borderRadius: 7,
     backgroundColor: colors.white,
   },
-  closeText: { color: colors.white, fontSize: 42, fontWeight: '900' },
+  closeText: { color: colors.white, fontSize: 42, fontWeight: '900', lineHeight: 42 },
   pressed: { opacity: 0.7, transform: [{ scale: 0.96 }] },
   disabled: { opacity: 0.55 },
 });
