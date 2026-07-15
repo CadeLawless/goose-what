@@ -23,6 +23,7 @@ export type RoundCapture = {
 
 type RoundCameraProps = {
   enabled: boolean;
+  microphoneEnabled: boolean;
   onError: () => void;
   onReady: () => void;
 };
@@ -31,15 +32,13 @@ export async function requestRoundCameraPermissions() {
   const cameraGranted =
     VisionCamera.cameraPermissionStatus === 'authorized' ||
     (await VisionCamera.requestCameraPermission());
-  if (!cameraGranted) return false;
+  if (!cameraGranted) return { cameraGranted: false, microphoneGranted: false };
 
   const microphoneGranted =
     VisionCamera.microphonePermissionStatus === 'authorized' ||
     (await VisionCamera.requestMicrophonePermission());
-  if (!microphoneGranted) return false;
-
-  await prepareRoundRecordingAudio();
-  return true;
+  if (microphoneGranted) await prepareRoundRecordingAudio();
+  return { cameraGranted: true, microphoneGranted };
 }
 
 async function prepareRoundRecordingAudio() {
@@ -56,12 +55,12 @@ async function prepareRoundRecordingAudio() {
 }
 
 export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
-  function RoundCamera({ enabled, onError, onReady }, ref) {
+  function RoundCamera({ enabled, microphoneEnabled, onError, onReady }, ref) {
     const device = useCameraDevice('front');
     const videoOutput = useVideoOutput({
       // iOS microphone audio is recorded independently and mixed after the round.
       // This avoids VisionCamera's intermittently missing iOS audio track.
-      enableAudio: Platform.OS !== 'ios',
+      enableAudio: microphoneEnabled && Platform.OS !== 'ios',
       fileType: 'mp4',
     });
     const recorderRef = useRef<Recorder | null>(null);
@@ -75,7 +74,7 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
           if (!enabled || !device || recorderRef.current) return null;
           let recorder: Recorder | null = null;
           try {
-            await prepareRoundRecordingAudio();
+            if (microphoneEnabled) await prepareRoundRecordingAudio();
             recorder = await videoOutput.createRecorder({ maxDuration });
             recorderRef.current = recorder;
             let finishRecording!: (filePath: string) => void;
@@ -87,7 +86,7 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
             void resultPromiseRef.current.catch(() => undefined);
             await recorder.startRecording(finishRecording, failRecording);
             const videoStartedAt = Date.now();
-            if (Platform.OS === 'ios') {
+            if (Platform.OS === 'ios' && microphoneEnabled) {
               const { startMicrophoneRecording } = await import('whatz-it-video-export');
               const microphoneUri = await startMicrophoneRecording();
               microphoneRef.current = {
@@ -102,7 +101,7 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
             } catch {
               // The recorder may already have stopped while cleaning up a failed start.
             }
-            if (Platform.OS === 'ios') {
+            if (Platform.OS === 'ios' && microphoneEnabled) {
               try {
                 const { cancelMicrophoneRecording } = await import('whatz-it-video-export');
                 await cancelMicrophoneRecording();
@@ -159,7 +158,7 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
           }
         },
       }),
-      [device, enabled, videoOutput],
+      [device, enabled, microphoneEnabled, videoOutput],
     );
 
     if (!enabled || !device) return null;

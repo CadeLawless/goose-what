@@ -60,6 +60,7 @@ const RoundContext = createContext<RoundContextValue | null>(null);
 export function RoundProvider({ children }: PropsWithChildren) {
   const [round, dispatch] = useReducer(roundReducer, initialRoundState);
   const [cameraEnabled, setCameraEnabled] = useState(false);
+  const [microphoneEnabled, setMicrophoneEnabled] = useState(false);
   const [currentVideo, setCurrentVideo] = useState<RoundVideo | null>(null);
   const seenCardsByDeck = useRef(new Map<string, Set<string>>());
   const cameraRef = useRef<RoundCameraRef>(null);
@@ -104,15 +105,24 @@ export function RoundProvider({ children }: PropsWithChildren) {
     if (preparationPromise.current) return preparationPromise.current;
 
     preparationPromise.current = (async () => {
-      const permissionsGranted = await requestRoundCameraPermissions();
+      const permissions = await requestRoundCameraPermissions();
       if (recordingCancelled.current) return 'unavailable' as const;
-      if (!permissionsGranted) return 'permission-denied' as const;
+      if (!permissions.cameraGranted) return 'permission-denied' as const;
 
+      setMicrophoneEnabled(permissions.microphoneGranted);
       setCameraEnabled(true);
       if (cameraReady.current) return 'ready' as const;
       const ready = await new Promise<boolean>((resolve) => {
-        cameraReadyResolver.current = resolve;
+        const timeout = setTimeout(() => {
+          cameraReadyResolver.current = null;
+          resolve(false);
+        }, 5000);
+        cameraReadyResolver.current = (value) => {
+          clearTimeout(timeout);
+          resolve(value);
+        };
       });
+      if (!ready) setCameraEnabled(false);
       return ready ? ('ready' as const) : ('error' as const);
     })()
       .catch(() => {
@@ -142,6 +152,7 @@ export function RoundProvider({ children }: PropsWithChildren) {
     recordingActive.current = false;
     recordingStartedAt.current = null;
     setCameraEnabled(false);
+    setMicrophoneEnabled(false);
     setAudioModeAsync({
       allowsRecording: false,
       interruptionMode: 'mixWithOthers',
@@ -313,6 +324,7 @@ export function RoundProvider({ children }: PropsWithChildren) {
     <RoundContext.Provider value={value}>
       <RoundCamera
         enabled={cameraEnabled}
+        microphoneEnabled={microphoneEnabled}
         onReady={() => {
             cameraReady.current = true;
             cameraReadyResolver.current?.(true);

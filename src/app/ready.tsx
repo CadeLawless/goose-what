@@ -153,6 +153,11 @@ export default function ReadyScreen() {
     setRecordingPreparation(await prepareRecording());
   };
 
+  const handlePlayWithoutVideo = async () => {
+    await cancelRecording();
+    setRecordingPreparation('unavailable');
+  };
+
   const handleCancel = async () => {
     setIsLeaving(true);
     await cancelRecording();
@@ -198,6 +203,13 @@ export default function ReadyScreen() {
                     style={styles.manualButton}
                   >
                     <Text style={styles.manualButtonText}>RETRY CAMERA</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => void handlePlayWithoutVideo()}
+                    style={styles.skipVideoButton}
+                  >
+                    <Text style={styles.skipVideoButtonText}>PLAY WITHOUT VIDEO</Text>
                   </Pressable>
                 </>
               ) : positionReady ? (
@@ -318,4 +330,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   manualButtonText: { color: '#000000', fontSize: 12, fontWeight: '900', letterSpacing: 1.2 },
+  skipVideoButton: { marginTop: spacing.md, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
+  skipVideoButtonText: { color: colors.white, fontSize: 11, fontWeight: '900', letterSpacing: 1.1 },
 });
