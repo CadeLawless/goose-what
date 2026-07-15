@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { useFocusEffect } from 'expo-router';
 import type { ReactNode } from 'react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -27,6 +27,7 @@ import { RoundVideoPlayer, type VideoSaveNotice } from '@/components/round-video
 import { useScreenshotTransition } from '@/components/screenshot-transition-provider';
 import { decks, getDeckById } from '@/data/decks';
 import { usePortraitScreen } from '@/hooks/use-portrait-screen';
+import { spacing } from '@/theme';
 import {
   deleteRoundVideo,
   isRoundVideoReadyToSave,
@@ -38,6 +39,9 @@ import {
 
 export default function DeckLibraryScreen() {
   const { width } = useWindowDimensions();
+  const scrollViewRef = useRef<ScrollView>(null);
+  const libraryTop = useRef(0);
+  const sectionOffsets = useRef({ decks: 0, videos: 0 });
   const isPortrait = usePortraitScreen();
   const { revealTransition } = useScreenshotTransition();
   const [decksExpanded, setDecksExpanded] = useState(true);
@@ -86,6 +90,32 @@ export default function DeckLibraryScreen() {
       };
     }, []),
   );
+
+  const scrollToExpandedSection = (section: 'decks' | 'videos') => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        scrollViewRef.current?.scrollTo({
+          animated: true,
+          y: Math.max(
+            0,
+            libraryTop.current + sectionOffsets.current[section] - spacing.lg,
+          ),
+        });
+      });
+    });
+  };
+
+  const toggleDecks = () => {
+    const expanded = !decksExpanded;
+    setDecksExpanded(expanded);
+    if (expanded) scrollToExpandedSection('decks');
+  };
+
+  const toggleVideos = () => {
+    const expanded = !videosExpanded;
+    setVideosExpanded(expanded);
+    if (expanded) scrollToExpandedSection('videos');
+  };
 
   const handleSave = async (video: RoundVideo): Promise<VideoSaveNotice> => {
     if (savingVideoId || !isRoundVideoReadyToSave(video)) {
@@ -175,6 +205,7 @@ export default function DeckLibraryScreen() {
         importantForAccessibility={
           videoPendingDelete === null ? 'auto' : 'no-hide-descendants'
         }
+        ref={scrollViewRef}
         showsVerticalScrollIndicator={false}
         style={styles.scrollView}
       >
@@ -199,30 +230,46 @@ export default function DeckLibraryScreen() {
           </View>
         </View>
 
-        <View style={[styles.library, { width: pageWidth, paddingHorizontal: horizontalPadding }]}>
-          <SectionHeading
-            expanded={decksExpanded}
-            label="MY DECKS"
-            onPress={() => setDecksExpanded((expanded) => !expanded)}
-          />
+        <View
+          onLayout={(event) => {
+            libraryTop.current = event.nativeEvent.layout.y;
+          }}
+          style={[styles.library, { width: pageWidth, paddingHorizontal: horizontalPadding }]}
+        >
+          <View
+            onLayout={(event) => {
+              sectionOffsets.current.decks = event.nativeEvent.layout.y;
+            }}
+          >
+            <SectionHeading
+              expanded={decksExpanded}
+              label="MY DECKS"
+              onPress={toggleDecks}
+            />
 
-          <CollapsibleContent expanded={decksExpanded}>
-            <View style={[styles.deckGrid, { columnGap, rowGap: columnGap }]}>
-              {decks.map((deck) => (
-                <View key={deck.id} style={{ width: deckWidth, aspectRatio: 2 / 3 }}>
-                  <DeckCard deck={deck} />
-                </View>
-              ))}
-            </View>
-          </CollapsibleContent>
+            <CollapsibleContent expanded={decksExpanded}>
+              <View style={[styles.deckGrid, { columnGap, rowGap: columnGap }]}>
+                {decks.map((deck) => (
+                  <View key={deck.id} style={{ width: deckWidth, aspectRatio: 2 / 3 }}>
+                    <DeckCard deck={deck} />
+                  </View>
+                ))}
+              </View>
+            </CollapsibleContent>
+          </View>
 
-          <View style={styles.videoSection}>
+          <View
+            onLayout={(event) => {
+              sectionOffsets.current.videos = event.nativeEvent.layout.y;
+            }}
+            style={styles.videoSection}
+          >
             <View accessibilityElementsHidden style={styles.sectionDivider} />
 
             <SectionHeading
               expanded={videosExpanded}
               label="MY VIDEOS"
-              onPress={() => setVideosExpanded((expanded) => !expanded)}
+              onPress={toggleVideos}
             />
 
             <CollapsibleContent expanded={videosExpanded}>
