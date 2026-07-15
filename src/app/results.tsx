@@ -256,7 +256,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.ink,
+    backgroundColor: colors.play,
   },
   saveVideoText: { color: colors.white, fontSize: 11, fontWeight: '900', letterSpacing: 1.1 },
   scoreRow: { flexDirection: 'row', gap: spacing.md, marginTop: spacing.xl },
