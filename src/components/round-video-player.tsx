@@ -397,6 +397,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   overlayCard: {
+    minWidth: '30%',
     maxWidth: '100%',
     minHeight: 48,
     justifyContent: 'center',
@@ -415,12 +416,12 @@ const styles = StyleSheet.create({
   },
   overlayText: {
     flexShrink: 1,
-    fontSize: 18,
-    lineHeight: 21,
+    fontSize: 22,
+    lineHeight: 25,
     fontWeight: '900',
     textAlign: 'center',
   },
-  overlayTextCompact: { fontSize: 8, lineHeight: 9 },
+  overlayTextCompact: { fontSize: 10, lineHeight: 11 },
   overlayTimer: { marginTop: 2, fontSize: 12, lineHeight: 14, fontWeight: '800', textAlign: 'center' },
   overlayTimerCompact: { marginTop: 1, fontSize: 5, lineHeight: 6 },
   closeButton: {

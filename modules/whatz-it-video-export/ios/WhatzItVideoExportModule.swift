@@ -579,7 +579,7 @@ public final class WhatzItVideoExportModule: Module {
     let horizontalPadding = renderSize.width * 0.0198
     let verticalPadding = renderSize.height * 0.0154
     let maximumTextWidth = max(1, renderSize.width - horizontalPadding * 2)
-    let baseFontSize = renderSize.height * 0.046
+    let baseFontSize = renderSize.height * 0.056
     var fontSize = baseFontSize
     var font = UIFont.systemFont(ofSize: fontSize, weight: .bold)
     var textSize = (text as NSString).size(withAttributes: [.font: font])
@@ -598,9 +598,10 @@ public final class WhatzItVideoExportModule: Module {
       timerFont = nil
       timerSize = .zero
     }
+    let minimumWidth = renderSize.width * 0.3
     let width = min(
       renderSize.width,
-      ceil(max(textSize.width, timerSize.width)) + horizontalPadding * 2
+      max(minimumWidth, ceil(max(textSize.width, timerSize.width)) + horizontalPadding * 2)
     )
     let minimumHeight = renderSize.height * 0.123
     let timerSpacing = timerText == nil ? 0 : renderSize.height * 0.0051

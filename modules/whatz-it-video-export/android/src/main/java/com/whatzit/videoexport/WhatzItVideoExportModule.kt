@@ -164,7 +164,7 @@ private class TimedCardOverlay(
     val horizontalPadding = canvasWidth * 0.0198f
     val verticalPadding = canvasHeight * 0.0154f
     val maximumTextWidth = max(1f, canvasWidth - horizontalPadding * 2)
-    answerPaint.textSize = canvasHeight * 0.046f
+    answerPaint.textSize = canvasHeight * 0.056f
     var answerWidth = answerPaint.measureText(text)
     if (answerWidth > maximumTextWidth) {
       answerPaint.textSize = max(0.1f, answerPaint.textSize * maximumTextWidth / answerWidth)
@@ -173,7 +173,8 @@ private class TimedCardOverlay(
     val timerText = timerTextFor(event, timeMs)
     timerPaint.textSize = canvasHeight * 0.028f
     val timerWidth = timerText?.let { timerPaint.measureText(it) } ?: 0f
-    val width = min(canvasWidth, max(answerWidth, timerWidth) + horizontalPadding * 2)
+    val minimumWidth = canvasWidth * 0.3f
+    val width = min(canvasWidth, max(minimumWidth, max(answerWidth, timerWidth) + horizontalPadding * 2))
     val answerHeight = lineHeight(answerPaint)
     val timerHeight = if (timerText == null) 0f else lineHeight(timerPaint)
     val timerSpacing = if (timerText == null) 0f else canvasHeight * 0.0051f
