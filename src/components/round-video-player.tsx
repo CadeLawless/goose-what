@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   type GestureResponderEvent,
   Modal,
+  Platform,
   Pressable,
   type StyleProp,
   StyleSheet,
@@ -36,6 +37,17 @@ type RoundVideoPlayerProps = {
   onDelete?: (video: RoundVideo) => Promise<void>;
 };
 
+type PendingScrubCompletion = {
+  session: number;
+  shouldResume: boolean;
+  targetTime: number;
+};
+
+const SCRUB_PREVIEW_INTERVAL_MS = 90;
+const SCRUB_SETTLE_FALLBACK_MS = 220;
+const SCRUB_SETTLE_TOLERANCE_SECONDS = 0.15;
+const SCRUB_TAP_MOVEMENT_THRESHOLD = 4;
+
 export function RoundVideoPlayer({
   video,
   style,
@@ -64,6 +76,16 @@ export function RoundVideoPlayer({
   const controlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isScrubbingRef = useRef(false);
   const wasPlayingBeforeScrubRef = useRef(false);
+  const scrubStartAxisRef = useRef(0);
+  const scrubStartTimeRef = useRef(0);
+  const scrubLatestTimeRef = useRef(0);
+  const scrubMovementRef = useRef(0);
+  const scrubLastPreviewAtRef = useRef(0);
+  const scrubPreviewCountRef = useRef(0);
+  const scrubPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrubCompletionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingScrubCompletionRef = useRef<PendingScrubCompletion | null>(null);
+  const scrubSessionRef = useRef(0);
   const [currentTime, setCurrentTime] = useState(0);
   const separateAudioUri = video.audioUri;
   const separateAudio = useAudioPlayer(separateAudioUri ?? null);
@@ -76,6 +98,30 @@ export function RoundVideoPlayer({
 
   useEventListener(player, 'timeUpdate', ({ currentTime: nextTime }) => {
     if (isScrubbingRef.current) return;
+    const pendingCompletion = pendingScrubCompletionRef.current;
+    if (pendingCompletion) {
+      if (
+        Math.abs(nextTime - pendingCompletion.targetTime) >
+        SCRUB_SETTLE_TOLERANCE_SECONDS
+      ) {
+        return;
+      }
+      if (scrubCompletionTimerRef.current !== null) {
+        clearTimeout(scrubCompletionTimerRef.current);
+        scrubCompletionTimerRef.current = null;
+      }
+      pendingScrubCompletionRef.current = null;
+      setCurrentTime(pendingCompletion.targetTime);
+      previousVideoTime.current = pendingCompletion.targetTime;
+      logVideoDiagnostic('scrub settled', {
+        actualTime: nextTime,
+        resumed: pendingCompletion.shouldResume,
+        targetTime: pendingCompletion.targetTime,
+        via: 'time-update',
+      });
+      if (pendingCompletion.shouldResume && expandedRef.current) player.play();
+      return;
+    }
     setCurrentTime(nextTime);
     if (!expandedRef.current || !separateAudioUri) return;
     const looped = nextTime + 0.5 < previousVideoTime.current;
@@ -148,6 +194,20 @@ export function RoundVideoPlayer({
     controlsTimer.current = null;
   };
 
+  const clearScrubPreviewTimer = () => {
+    if (scrubPreviewTimerRef.current === null) return;
+    clearTimeout(scrubPreviewTimerRef.current);
+    scrubPreviewTimerRef.current = null;
+  };
+
+  const clearScrubCompletion = () => {
+    if (scrubCompletionTimerRef.current !== null) {
+      clearTimeout(scrubCompletionTimerRef.current);
+      scrubCompletionTimerRef.current = null;
+    }
+    pendingScrubCompletionRef.current = null;
+  };
+
   const scheduleControlsHide = () => {
     clearControlsTimer();
     controlsTimer.current = setTimeout(() => {
@@ -173,6 +233,10 @@ export function RoundVideoPlayer({
   useEffect(
     () => () => {
       if (controlsTimer.current !== null) clearTimeout(controlsTimer.current);
+      if (scrubPreviewTimerRef.current !== null) clearTimeout(scrubPreviewTimerRef.current);
+      if (scrubCompletionTimerRef.current !== null) {
+        clearTimeout(scrubCompletionTimerRef.current);
+      }
     },
     [],
   );
@@ -195,8 +259,11 @@ export function RoundVideoPlayer({
 
   const closeExpanded = () => {
     clearControlsTimer();
+    clearScrubPreviewTimer();
+    clearScrubCompletion();
     isScrubbingRef.current = false;
     setPlayerScrubbingMode(player, false);
+    setPlayerSeekTolerance(player, 0);
     expandedRef.current = false;
     pauseAudioPlayer(separateAudio);
     setPlayerMuted(player, true);
@@ -257,44 +324,127 @@ export function RoundVideoPlayer({
     }
   };
 
-  const getProgressTime = (event: GestureResponderEvent) => {
+  const getTappedProgressTime = (event: GestureResponderEvent) => {
     if (duration <= 0 || progressWidth <= 0) return null;
     const progress = Math.min(1, Math.max(0, event.nativeEvent.locationX / progressWidth));
     return progress * duration;
   };
 
-  const scrubToProgress = (event: GestureResponderEvent) => {
-    const nextTime = getProgressTime(event);
-    if (nextTime === null) return null;
-    seekVideoPlayer(player, nextTime);
+  const queueScrubPreview = (nextTime: number) => {
+    scrubLatestTimeRef.current = nextTime;
+    const elapsed = Date.now() - scrubLastPreviewAtRef.current;
+    if (elapsed >= SCRUB_PREVIEW_INTERVAL_MS) {
+      clearScrubPreviewTimer();
+      scrubLastPreviewAtRef.current = Date.now();
+      scrubPreviewCountRef.current += 1;
+      seekVideoPlayer(player, nextTime);
+      return;
+    }
+    if (scrubPreviewTimerRef.current !== null) return;
+    scrubPreviewTimerRef.current = setTimeout(() => {
+      scrubPreviewTimerRef.current = null;
+      if (!isScrubbingRef.current) return;
+      scrubLastPreviewAtRef.current = Date.now();
+      scrubPreviewCountRef.current += 1;
+      seekVideoPlayer(player, scrubLatestTimeRef.current);
+    }, SCRUB_PREVIEW_INTERVAL_MS - elapsed);
+  };
+
+  const updateScrubTarget = (nextTime: number, preview: boolean) => {
+    scrubLatestTimeRef.current = nextTime;
     setCurrentTime(nextTime);
     previousVideoTime.current = nextTime;
-    return nextTime;
+    if (preview) queueScrubPreview(nextTime);
+  };
+
+  const getDraggedProgressTime = (event: GestureResponderEvent) => {
+    if (duration <= 0 || progressWidth <= 0) return null;
+    const movement = getScrubAxisPosition(event) - scrubStartAxisRef.current;
+    scrubMovementRef.current = Math.max(scrubMovementRef.current, Math.abs(movement));
+    return clampTime(
+      scrubStartTimeRef.current + (movement / progressWidth) * duration,
+      duration,
+    );
+  };
+
+  const moveScrubbing = (event: GestureResponderEvent) => {
+    if (!isScrubbingRef.current) return;
+    const nextTime = getDraggedProgressTime(event);
+    if (nextTime !== null) updateScrubTarget(nextTime, true);
   };
 
   const startScrubbing = (event: GestureResponderEvent) => {
     if (duration <= 0 || progressWidth <= 0) return;
     clearControlsTimer();
+    clearScrubPreviewTimer();
+    const pendingResume = pendingScrubCompletionRef.current?.shouldResume;
+    clearScrubCompletion();
     setControlsVisible(true);
-    wasPlayingBeforeScrubRef.current = player.playing;
+    wasPlayingBeforeScrubRef.current = pendingResume ?? player.playing;
+    scrubStartAxisRef.current = getScrubAxisPosition(event);
+    scrubStartTimeRef.current = clampTime(player.currentTime, duration);
+    scrubLatestTimeRef.current = scrubStartTimeRef.current;
+    scrubMovementRef.current = 0;
+    scrubLastPreviewAtRef.current = 0;
+    scrubPreviewCountRef.current = 0;
     isScrubbingRef.current = true;
     player.pause();
     setPlayerScrubbingMode(player, true);
+    setPlayerSeekTolerance(player, 0.1);
     pauseAudioPlayer(separateAudio);
-    scrubToProgress(event);
+    setCurrentTime(scrubStartTimeRef.current);
+    logVideoDiagnostic('scrub started', {
+      axis: scrubStartAxisRef.current,
+      startTime: scrubStartTimeRef.current,
+      wasPlaying: wasPlayingBeforeScrubRef.current,
+    });
   };
 
   const finishScrubbing = (event: GestureResponderEvent) => {
     if (!isScrubbingRef.current) return;
-    const nextTime = scrubToProgress(event) ?? player.currentTime;
+    const draggedTime = getDraggedProgressTime(event);
+    const tappedTime = getTappedProgressTime(event);
+    const nextTime =
+      scrubMovementRef.current < SCRUB_TAP_MOVEMENT_THRESHOLD
+        ? (tappedTime ?? scrubLatestTimeRef.current)
+        : (draggedTime ?? scrubLatestTimeRef.current);
     const shouldResume = wasPlayingBeforeScrubRef.current;
+    clearScrubPreviewTimer();
     isScrubbingRef.current = false;
     setPlayerScrubbingMode(player, false);
+    setPlayerSeekTolerance(player, 0);
+    updateScrubTarget(nextTime, false);
+
+    const session = scrubSessionRef.current + 1;
+    scrubSessionRef.current = session;
+    pendingScrubCompletionRef.current = { session, shouldResume, targetTime: nextTime };
+    seekVideoPlayer(player, nextTime);
+    logVideoDiagnostic('scrub finished', {
+      movement: scrubMovementRef.current,
+      previewSeekCount: scrubPreviewCountRef.current,
+      shouldResume,
+      targetTime: nextTime,
+      usedTapPosition: scrubMovementRef.current < SCRUB_TAP_MOVEMENT_THRESHOLD,
+    });
 
     if (separateAudioUri) {
       void separateAudio.seekTo(nextTime).catch(() => undefined);
     }
-    if (shouldResume) player.play();
+    scrubCompletionTimerRef.current = setTimeout(() => {
+      const pendingCompletion = pendingScrubCompletionRef.current;
+      if (!pendingCompletion || pendingCompletion.session !== session) return;
+      scrubCompletionTimerRef.current = null;
+      pendingScrubCompletionRef.current = null;
+      seekVideoPlayer(player, pendingCompletion.targetTime);
+      setCurrentTime(pendingCompletion.targetTime);
+      previousVideoTime.current = pendingCompletion.targetTime;
+      logVideoDiagnostic('scrub settled', {
+        resumed: pendingCompletion.shouldResume,
+        targetTime: pendingCompletion.targetTime,
+        via: 'fallback',
+      });
+      if (pendingCompletion.shouldResume && expandedRef.current) player.play();
+    }, SCRUB_SETTLE_FALLBACK_MS);
     scheduleControlsHide();
   };
 
@@ -467,7 +617,7 @@ export function RoundVideoPlayer({
                       }}
                       onMoveShouldSetResponder={() => true}
                       onResponderGrant={startScrubbing}
-                      onResponderMove={scrubToProgress}
+                      onResponderMove={moveScrubbing}
                       onResponderRelease={finishScrubbing}
                       onResponderTerminate={finishScrubbing}
                       onStartShouldSetResponder={() => true}
@@ -528,8 +678,20 @@ function seekVideoPlayer(player: VideoPlayer, time: number) {
   player.currentTime = time;
 }
 
+function setPlayerSeekTolerance(player: VideoPlayer, tolerance: number) {
+  player.seekTolerance = { toleranceAfter: tolerance, toleranceBefore: tolerance };
+}
+
 function setPlayerScrubbingMode(player: VideoPlayer, enabled: boolean) {
   player.scrubbingModeOptions = { scrubbingModeEnabled: enabled };
+}
+
+function getScrubAxisPosition(event: GestureResponderEvent) {
+  return Platform.OS === 'web' ? event.nativeEvent.pageX : event.nativeEvent.pageY;
+}
+
+function clampTime(time: number, duration: number) {
+  return Math.max(0, Math.min(duration, time));
 }
 
 function pauseAudioPlayer(player: AudioPlayer) {
