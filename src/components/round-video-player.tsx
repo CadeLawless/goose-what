@@ -45,14 +45,12 @@ export function RoundVideoPlayer({
   const insets = useSafeAreaInsets();
   const [expanded, setExpanded] = useState(false);
   const [saveNotice, setSaveNotice] = useState<VideoSaveNotice | null>(null);
-  const [expandedPlaybackSource, setExpandedPlaybackSource] = useState(() =>
-    getPreferredPlaybackSource(video),
-  );
+  // Keep one source for this player's entire mounted lifetime. Replacing the raw
+  // recording with its finished export would otherwise restart visible playback.
+  const [playbackSource] = useState(() => getPreferredPlaybackSource(video));
   const expandedRef = useRef(false);
   const previousVideoTime = useRef(0);
   const [currentTime, setCurrentTime] = useState(0);
-  const preferredPlaybackSource = getPreferredPlaybackSource(video);
-  const playbackSource = expanded ? expandedPlaybackSource : preferredPlaybackSource;
   const playbackUri = playbackSource.uri;
   const separateAudioUri = playbackSource.isExport ? undefined : video.audioUri;
   const separateAudio = useAudioPlayer(separateAudioUri ?? null);
@@ -106,7 +104,6 @@ export function RoundVideoPlayer({
   );
 
   const openExpanded = async () => {
-    setExpandedPlaybackSource(preferredPlaybackSource);
     expandedRef.current = true;
     previousVideoTime.current = player.currentTime;
     setExpanded(true);
@@ -324,25 +321,31 @@ function getEventAtTime(events: RoundVideoEvent[], timeMs: number) {
 function PlaybackOverlay({ event, compact = false }: { event?: RoundVideoEvent; compact?: boolean }) {
   if (!event) return null;
   const palette = getEventPalette(event.kind);
+  const text = event.text.replace(/\s+/g, ' ').trim();
   return (
-    <View
-      pointerEvents="none"
-      style={[
-        styles.overlay,
-        compact && styles.overlayCompact,
-        { backgroundColor: palette.background },
-      ]}
-    >
-      <Text
-        numberOfLines={2}
+    <View pointerEvents="none" style={[styles.overlay, compact && styles.overlayCompact]}>
+      <View
         style={[
-          styles.overlayText,
-          compact && styles.overlayTextCompact,
-          { color: palette.foreground },
+          styles.overlayCard,
+          compact && styles.overlayCardCompact,
+          { backgroundColor: palette.background },
         ]}
       >
-        {event.text}
-      </Text>
+        <Text
+          adjustsFontSizeToFit
+          allowFontScaling={false}
+          ellipsizeMode="clip"
+          minimumFontScale={0.01}
+          numberOfLines={1}
+          style={[
+            styles.overlayText,
+            compact && styles.overlayTextCompact,
+            { color: palette.foreground },
+          ]}
+        >
+          {text}
+        </Text>
+      </View>
     </View>
   );
 }
@@ -367,10 +370,13 @@ const styles = StyleSheet.create({
   expandedFrame: { flex: 1, backgroundColor: '#000000' },
   overlay: {
     position: 'absolute',
-    left: '50%',
-    transform: [{ translateX: -100 }],
+    left: 0,
+    right: 0,
     bottom: 52,
-    width: 200,
+    alignItems: 'center',
+  },
+  overlayCard: {
+    maxWidth: '100%',
     minHeight: 48,
     justifyContent: 'center',
     paddingHorizontal: spacing.md,
@@ -378,15 +384,21 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   overlayCompact: {
-    transform: [{ translateX: -42 }],
     bottom: 5,
-    width: 84,
+  },
+  overlayCardCompact: {
     minHeight: 22,
     paddingHorizontal: 6,
     paddingVertical: 3,
     borderRadius: 6,
   },
-  overlayText: { fontSize: 18, lineHeight: 21, fontWeight: '900', textAlign: 'center' },
+  overlayText: {
+    flexShrink: 1,
+    fontSize: 18,
+    lineHeight: 21,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
   overlayTextCompact: { fontSize: 8, lineHeight: 9 },
   closeButton: {
     position: 'absolute',

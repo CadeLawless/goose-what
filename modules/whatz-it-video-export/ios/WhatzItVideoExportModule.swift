@@ -60,7 +60,7 @@ public final class WhatzItVideoExportModule: Module {
     Name("WhatzItVideoExport")
 
     Constant("overlayExportVersion") {
-      4
+      5
     }
 
     AsyncFunction("exportOverlayVideo") {
@@ -496,9 +496,25 @@ public final class WhatzItVideoExportModule: Module {
     start: Double,
     duration: Double
   ) -> CALayer {
-    let width = renderSize.width * 0.36
-    let height = max(renderSize.height * 0.085, width * 0.26)
-    let margin = renderSize.width * 0.035
+    let text = event.text
+      .split(whereSeparator: { $0.isWhitespace })
+      .joined(separator: " ")
+    let horizontalPadding = renderSize.width * 0.0198
+    let verticalPadding = renderSize.height * 0.0154
+    let maximumTextWidth = max(1, renderSize.width - horizontalPadding * 2)
+    let baseFontSize = renderSize.height * 0.046
+    var fontSize = baseFontSize
+    var font = UIFont.systemFont(ofSize: fontSize, weight: .bold)
+    var textSize = (text as NSString).size(withAttributes: [.font: font])
+    while textSize.width > maximumTextWidth && fontSize > 1 {
+      fontSize = max(1, fontSize - 1)
+      font = UIFont.systemFont(ofSize: fontSize, weight: .bold)
+      textSize = (text as NSString).size(withAttributes: [.font: font])
+    }
+    let width = min(renderSize.width, ceil(textSize.width) + horizontalPadding * 2)
+    let minimumHeight = renderSize.height * 0.123
+    let height = max(minimumHeight, ceil(font.lineHeight) + verticalPadding * 2)
+    let margin = renderSize.height * 0.133
     let container = CALayer()
     container.frame = CGRect(
       x: (renderSize.width - width) / 2,
@@ -506,7 +522,13 @@ public final class WhatzItVideoExportModule: Module {
       width: width,
       height: height
     )
-    container.contents = makeOverlayImage(event: event, size: CGSize(width: width, height: height))
+    container.contents = makeOverlayImage(
+      event: event,
+      text: text,
+      size: CGSize(width: width, height: height),
+      font: font,
+      horizontalPadding: horizontalPadding
+    )
     container.contentsGravity = .resize
     container.opacity = 0
 
@@ -523,7 +545,10 @@ public final class WhatzItVideoExportModule: Module {
 
   private static func makeOverlayImage(
     event: VideoOverlayEventRecord,
-    size: CGSize
+    text: String,
+    size: CGSize,
+    font: UIFont,
+    horizontalPadding: CGFloat
   ) -> CGImage? {
     let format = UIGraphicsImageRendererFormat()
     format.scale = 1
@@ -533,17 +558,15 @@ public final class WhatzItVideoExportModule: Module {
       palette.background.setFill()
       UIBezierPath(
         roundedRect: CGRect(origin: .zero, size: size),
-        cornerRadius: min(size.width, size.height) * 0.08
+        cornerRadius: min(size.width, size.height) * 0.25
       ).fill()
 
-      let horizontalPadding = size.width * 0.055
       let availableTextWidth = size.width - horizontalPadding * 2
-      let font = UIFont.systemFont(ofSize: size.width * 0.075, weight: .bold)
       let paragraph = NSMutableParagraphStyle()
       paragraph.alignment = .center
-      paragraph.lineBreakMode = .byTruncatingTail
+      paragraph.lineBreakMode = .byClipping
       let attributedText = NSAttributedString(
-        string: event.text,
+        string: text,
         attributes: [
           .font: font,
           .foregroundColor: palette.foreground,
@@ -551,7 +574,7 @@ public final class WhatzItVideoExportModule: Module {
         ]
       )
       let measuredText = attributedText.boundingRect(
-        with: CGSize(width: availableTextWidth, height: size.height),
+        with: CGSize(width: availableTextWidth, height: font.lineHeight * 2),
         options: [.usesLineFragmentOrigin, .usesFontLeading],
         context: nil
       )

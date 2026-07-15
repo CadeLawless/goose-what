@@ -167,6 +167,7 @@ export default function ResultsScreen() {
               <View style={styles.videoSection}>
                 <RoundVideoPlayer
                   isSaving={isSavingVideo}
+                  key={currentVideo.id}
                   saveDisabled={!videoReady}
                   onDelete={requestDeleteVideo}
                   onSave={handleSaveVideo}
