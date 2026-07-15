@@ -1,34 +1,44 @@
 import { type Href, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { captureRef } from 'react-native-view-shot';
 
 import { ConfirmationPrompt } from '@/components/confirmation-prompt';
 import { PortraitTransition } from '@/components/orientation-transition';
-import { RoundVideoPlayer } from '@/components/round-video-player';
+import { RoundVideoPlayer, type VideoSaveNotice } from '@/components/round-video-player';
 import { useScreenshotTransition } from '@/components/screenshot-transition-provider';
 import { getDeckById } from '@/data/decks';
 import { useRound } from '@/game/round-context';
 import { usePortraitScreen } from '@/hooks/use-portrait-screen';
 import { colors, radius, spacing, typography } from '@/theme';
-import { saveRoundVideoToDevice } from '@/video/round-videos';
+import { isRoundVideoReadyToSave, saveRoundVideoToDevice } from '@/video/round-videos';
 
 export default function ResultsScreen() {
   const router = useRouter();
-  const { currentVideo, round, configureRound, deleteCurrentVideo, resetRound } = useRound();
+  const {
+    currentVideo,
+    round,
+    configureRound,
+    deleteCurrentVideo,
+    resetRound,
+    retryCurrentVideoExport,
+  } = useRound();
   const [isStarting, setIsStarting] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
   const [isSavingVideo, setIsSavingVideo] = useState(false);
-  const [deletePromptVisible, setDeletePromptVisible] = useState(false);
-  const [isDeletingVideo, setIsDeletingVideo] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [saveNotice, setSaveNotice] = useState<{
+    title: string;
+    message: string;
+  } | null>(null);
   const screenRef = useRef<View>(null);
   const isPortrait = usePortraitScreen();
   const { beginTransition, revealTransition } = useScreenshotTransition();
   const deck = getDeckById(round.deckId ?? undefined);
   const correctCount = round.results.filter((result) => result.outcome === 'correct').length;
   const passedCount = round.results.filter((result) => result.outcome === 'passed').length;
+  const videoReady = currentVideo ? isRoundVideoReadyToSave(currentVideo) : false;
+  const videoExportFailed = currentVideo?.exportStatus === 'failed';
 
   useEffect(() => {
     if (isPortrait) revealTransition('results');
@@ -73,45 +83,36 @@ export default function ResultsScreen() {
     router.replace('/');
   };
 
-  const handleSaveVideo = async () => {
-    if (!currentVideo || isSavingVideo) return;
+  const handleSaveVideo = async (): Promise<VideoSaveNotice> => {
+    if (!currentVideo || !videoReady || isSavingVideo) {
+      return { title: 'Video not ready', message: 'Please wait for this video to finish exporting.' };
+    }
     setIsSavingVideo(true);
     try {
       await saveRoundVideoToDevice(currentVideo);
-      Alert.alert(
-        'Video saved',
-        'The round video, its sound, and the card overlay are now in your device library.',
-      );
+      return {
+        title: 'Video saved',
+        message: 'The round video and its sound are now in your device library.',
+      };
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'Please try again.';
-      Alert.alert('Could not save video', detail);
+      return { title: 'Could not save video', message: detail };
     } finally {
       setIsSavingVideo(false);
     }
   };
 
-  const requestDeleteVideo = () => {
-    setDeleteError(null);
-    setDeletePromptVisible(true);
+  const handlePortraitSave = async () => {
+    setSaveNotice(await handleSaveVideo());
   };
 
-  const cancelDeleteVideo = () => {
-    if (isDeletingVideo) return;
-    setDeletePromptVisible(false);
-    setDeleteError(null);
-  };
-
-  const confirmDeleteVideo = async () => {
-    if (!currentVideo || isDeletingVideo) return;
-    setIsDeletingVideo(true);
-    setDeleteError(null);
-    try {
-      await deleteCurrentVideo();
-      setDeletePromptVisible(false);
-    } catch (error) {
-      setDeleteError(error instanceof Error ? error.message : 'Please try again.');
-    } finally {
-      setIsDeletingVideo(false);
+  const handleRetryExport = async () => {
+    const preparedVideo = await retryCurrentVideoExport();
+    if (preparedVideo?.exportStatus === 'failed') {
+      setSaveNotice({
+        title: 'Export failed',
+        message: 'The video and its audio are safe in WHATZ IT. Please send the [RoundVideo] terminal logs.',
+      });
     }
   };
 
@@ -123,9 +124,7 @@ export default function ResultsScreen() {
       edges={['top', 'bottom']}
     >
       <FlatList
-        accessibilityElementsHidden={deletePromptVisible}
         data={round.results}
-        importantForAccessibility={deletePromptVisible ? 'no-hide-descendants' : 'auto'}
         style={styles.list}
         keyExtractor={(item) => item.cardId}
         contentContainerStyle={styles.content}
@@ -138,19 +137,33 @@ export default function ResultsScreen() {
               <View style={styles.videoSection}>
                 <RoundVideoPlayer
                   isSaving={isSavingVideo}
-                  onDelete={requestDeleteVideo}
+                  key={currentVideo.id}
+                  saveDisabled={!videoReady}
+                  onDelete={() => deleteCurrentVideo()}
                   onSave={handleSaveVideo}
                   video={currentVideo}
                   style={styles.video}
                 />
                 <Pressable
                   accessibilityRole="button"
-                  disabled={isSavingVideo}
-                  onPress={handleSaveVideo}
-                  style={({ pressed }) => [styles.saveVideoButton, pressed && styles.pressed]}
+                  disabled={isSavingVideo || (!videoReady && !videoExportFailed)}
+                  onPress={() =>
+                    void (videoExportFailed ? handleRetryExport() : handlePortraitSave())
+                  }
+                  style={({ pressed }) => [
+                    styles.saveVideoButton,
+                    !videoReady && !videoExportFailed && styles.disabled,
+                    pressed && (videoReady || videoExportFailed) && styles.pressed,
+                  ]}
                 >
                   <Text style={styles.saveVideoText}>
-                    {isSavingVideo ? 'EXPORTING…' : 'SAVE VIDEO'}
+                    {videoExportFailed
+                      ? 'RETRY EXPORT'
+                      : !videoReady
+                        ? 'PREPARING VIDEO…'
+                        : isSavingVideo
+                          ? 'SAVING…'
+                          : 'SAVE VIDEO'}
                   </Text>
                 </Pressable>
               </View>
@@ -191,11 +204,7 @@ export default function ResultsScreen() {
         ItemSeparatorComponent={() => <View style={styles.separator} />}
         ListEmptyComponent={<Text style={styles.noCards}>Time ran out before a card was answered.</Text>}
       />
-      <View
-        accessibilityElementsHidden={deletePromptVisible}
-        importantForAccessibility={deletePromptVisible ? 'no-hide-descendants' : 'auto'}
-        style={styles.actions}
-      >
+      <View style={styles.actions}>
         <Pressable
           disabled={isStarting || isLeaving}
           onPress={handleReplay}
@@ -212,19 +221,13 @@ export default function ResultsScreen() {
         </Pressable>
       </View>
       <ConfirmationPrompt
-        busy={isDeletingVideo}
-        busyLabel="DELETING..."
-        confirmLabel="DELETE VIDEO"
-        destructive
-        message={
-          deleteError
-            ? `The video could not be deleted. ${deleteError}`
-            : 'This removes the video from WHATZ IT on this device.'
-        }
-        onCancel={cancelDeleteVideo}
-        onConfirm={confirmDeleteVideo}
-        title={deleteError ? 'Could not delete video' : 'Delete round video?'}
-        visible={deletePromptVisible && currentVideo !== null}
+        cancelLabel={null}
+        confirmLabel="OK"
+        message={saveNotice?.message ?? ''}
+        onCancel={() => setSaveNotice(null)}
+        onConfirm={() => setSaveNotice(null)}
+        title={saveNotice?.title ?? ''}
+        visible={saveNotice !== null}
       />
     </SafeAreaView>
   );
@@ -248,7 +251,7 @@ const styles = StyleSheet.create({
   title: { ...typography.hero, color: colors.ink, marginTop: spacing.sm },
   deckName: { color: colors.muted, fontSize: 16, fontWeight: '700', marginTop: spacing.sm },
   videoSection: { alignItems: 'center', marginTop: spacing.lg },
-  video: { width: 180, aspectRatio: 16 / 9, borderRadius: radius.lg },
+  video: { width: '100%', aspectRatio: 16 / 9, borderRadius: radius.lg },
   saveVideoButton: {
     minHeight: 42,
     marginTop: spacing.sm,
@@ -256,7 +259,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.ink,
+    backgroundColor: colors.play,
   },
   saveVideoText: { color: colors.white, fontSize: 11, fontWeight: '900', letterSpacing: 1.1 },
   scoreRow: { flexDirection: 'row', gap: spacing.md, marginTop: spacing.xl },
@@ -307,4 +310,5 @@ const styles = StyleSheet.create({
   },
   secondaryButtonText: { color: colors.ink, fontSize: 13, fontWeight: '900', letterSpacing: 1.1 },
   pressed: { transform: [{ scale: 0.99 }], opacity: 0.88 },
+  disabled: { opacity: 0.55 },
 });

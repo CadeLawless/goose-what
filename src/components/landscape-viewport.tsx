@@ -3,15 +3,17 @@ import { Platform, StyleSheet, useWindowDimensions, View } from 'react-native';
 
 import { colors } from '@/theme';
 
-export function LandscapeViewport({ children }: PropsWithChildren) {
+type LandscapeViewportProps = PropsWithChildren<{ backgroundColor?: string }>;
+
+export function LandscapeViewport({ children, backgroundColor }: LandscapeViewportProps) {
   const { width, height } = useWindowDimensions();
 
   if (Platform.OS === 'web') {
-    return <View style={styles.web}>{children}</View>;
+    return <View style={[styles.web, backgroundColor ? { backgroundColor } : undefined]}>{children}</View>;
   }
 
   return (
-    <View style={styles.viewport}>
+    <View style={[styles.viewport, backgroundColor ? { backgroundColor } : undefined]}>
       <View
         style={[
           styles.rotated,

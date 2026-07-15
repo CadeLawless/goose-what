@@ -1,9 +1,9 @@
 import { Image } from 'expo-image';
 import { useFocusEffect } from 'expo-router';
 import type { ReactNode } from 'react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Alert,
+  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -20,31 +20,42 @@ import Animated, {
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { DeckCard } from '@/components/deck-card';
 import { ConfirmationPrompt } from '@/components/confirmation-prompt';
+import { DeckCard } from '@/components/deck-card';
 import { PortraitTransition } from '@/components/orientation-transition';
-import { RoundVideoPlayer } from '@/components/round-video-player';
+import { RoundVideoPlayer, type VideoSaveNotice } from '@/components/round-video-player';
 import { useScreenshotTransition } from '@/components/screenshot-transition-provider';
 import { decks, getDeckById } from '@/data/decks';
 import { usePortraitScreen } from '@/hooks/use-portrait-screen';
+import { spacing } from '@/theme';
 import {
   deleteRoundVideo,
+  isRoundVideoReadyToSave,
   loadRoundVideos,
+  prepareRoundVideoExport,
   saveRoundVideoToDevice,
   type RoundVideo,
 } from '@/video/round-videos';
 
 export default function DeckLibraryScreen() {
   const { width } = useWindowDimensions();
+  const scrollViewRef = useRef<ScrollView>(null);
+  const libraryTop = useRef(0);
+  const sectionOffsets = useRef({ decks: 0, videos: 0 });
   const isPortrait = usePortraitScreen();
   const { revealTransition } = useScreenshotTransition();
   const [decksExpanded, setDecksExpanded] = useState(true);
   const [videosExpanded, setVideosExpanded] = useState(true);
   const [videos, setVideos] = useState<RoundVideo[]>([]);
   const [savingVideoId, setSavingVideoId] = useState<string | null>(null);
+  const [exportingVideoId, setExportingVideoId] = useState<string | null>(null);
   const [videoPendingDelete, setVideoPendingDelete] = useState<RoundVideo | null>(null);
   const [isDeletingVideo, setIsDeletingVideo] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [saveNotice, setSaveNotice] = useState<{
+    title: string;
+    message: string;
+  } | null>(null);
   const pageWidth = Math.min(width, 720);
   const horizontalPadding = width < 380 ? 22 : Math.min(48, Math.round(width * 0.074));
   const columnGap = width < 380 ? 16 : Math.min(32, Math.round(width * 0.06));
@@ -62,7 +73,17 @@ export default function DeckLibraryScreen() {
     useCallback(() => {
       let active = true;
       loadRoundVideos().then((storedVideos) => {
-        if (active) setVideos(storedVideos);
+        if (!active) return;
+        setVideos(storedVideos);
+        storedVideos.forEach((video) => {
+          if (isRoundVideoReadyToSave(video) || video.exportStatus === 'failed') return;
+          void prepareRoundVideoExport(video).then((prepared) => {
+            if (!active) return;
+            setVideos((current) =>
+              current.map((item) => (item.id === prepared.id ? prepared : item)),
+            );
+          });
+        });
       });
       return () => {
         active = false;
@@ -70,26 +91,87 @@ export default function DeckLibraryScreen() {
     }, []),
   );
 
-  const handleSave = async (video: RoundVideo) => {
-    if (savingVideoId) return;
+  const scrollToExpandedSection = (section: 'decks' | 'videos') => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        scrollViewRef.current?.scrollTo({
+          animated: true,
+          y: Math.max(
+            0,
+            libraryTop.current + sectionOffsets.current[section] - spacing.lg,
+          ),
+        });
+      });
+    });
+  };
+
+  const toggleDecks = () => {
+    const expanded = !decksExpanded;
+    setDecksExpanded(expanded);
+    if (expanded) scrollToExpandedSection('decks');
+  };
+
+  const toggleVideos = () => {
+    const expanded = !videosExpanded;
+    setVideosExpanded(expanded);
+    if (expanded) scrollToExpandedSection('videos');
+  };
+
+  const handleSave = async (video: RoundVideo): Promise<VideoSaveNotice> => {
+    if (savingVideoId || !isRoundVideoReadyToSave(video)) {
+      return { title: 'Video not ready', message: 'Please wait for this video to finish exporting.' };
+    }
     setSavingVideoId(video.id);
     try {
       await saveRoundVideoToDevice(video);
-      Alert.alert(
-        'Video saved',
-        'The round video, its sound, and the card overlay are now in your device library.',
-      );
+      return {
+        title: 'Video saved',
+        message: 'The round video and its sound are now in your device library.',
+      };
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'Please try again.';
-      Alert.alert('Could not save video', detail);
+      return { title: 'Could not save video', message: detail };
     } finally {
       setSavingVideoId(null);
+    }
+  };
+
+  const handlePortraitSave = async (video: RoundVideo) => {
+    setSaveNotice(await handleSave(video));
+  };
+
+  const handleRetryExport = async (video: RoundVideo) => {
+    if (exportingVideoId) return;
+    setExportingVideoId(video.id);
+    setVideos((current) =>
+      current.map((item) =>
+        item.id === video.id ? { ...item, exportStatus: 'preparing' } : item,
+      ),
+    );
+    try {
+      const prepared = await prepareRoundVideoExport(video);
+      setVideos((current) =>
+        current.map((item) => (item.id === prepared.id ? prepared : item)),
+      );
+      if (prepared.exportStatus === 'failed') {
+        setSaveNotice({
+          title: 'Export failed',
+          message: 'The video and its audio are safe in WHATZ IT. Please send the [RoundVideo] terminal logs.',
+        });
+      }
+    } finally {
+      setExportingVideoId(null);
     }
   };
 
   const handleDelete = (video: RoundVideo) => {
     setDeleteError(null);
     setVideoPendingDelete(video);
+  };
+
+  const deleteFromPlayer = async (video: RoundVideo) => {
+    const next = await deleteRoundVideo(video.id);
+    setVideos(next);
   };
 
   const cancelDelete = () => {
@@ -123,6 +205,7 @@ export default function DeckLibraryScreen() {
         importantForAccessibility={
           videoPendingDelete === null ? 'auto' : 'no-hide-descendants'
         }
+        ref={scrollViewRef}
         showsVerticalScrollIndicator={false}
         style={styles.scrollView}
       >
@@ -147,30 +230,46 @@ export default function DeckLibraryScreen() {
           </View>
         </View>
 
-        <View style={[styles.library, { width: pageWidth, paddingHorizontal: horizontalPadding }]}>
-          <SectionHeading
-            expanded={decksExpanded}
-            label="MY DECKS"
-            onPress={() => setDecksExpanded((expanded) => !expanded)}
-          />
+        <View
+          onLayout={(event) => {
+            libraryTop.current = event.nativeEvent.layout.y;
+          }}
+          style={[styles.library, { width: pageWidth, paddingHorizontal: horizontalPadding }]}
+        >
+          <View
+            onLayout={(event) => {
+              sectionOffsets.current.decks = event.nativeEvent.layout.y;
+            }}
+          >
+            <SectionHeading
+              expanded={decksExpanded}
+              label="MY DECKS"
+              onPress={toggleDecks}
+            />
 
-          <CollapsibleContent expanded={decksExpanded}>
-            <View style={[styles.deckGrid, { columnGap, rowGap: columnGap }]}>
-              {decks.map((deck) => (
-                <View key={deck.id} style={{ width: deckWidth, aspectRatio: 2 / 3 }}>
-                  <DeckCard deck={deck} />
-                </View>
-              ))}
-            </View>
-          </CollapsibleContent>
+            <CollapsibleContent expanded={decksExpanded}>
+              <View style={[styles.deckGrid, { columnGap, rowGap: columnGap }]}>
+                {decks.map((deck) => (
+                  <View key={deck.id} style={{ width: deckWidth, aspectRatio: 2 / 3 }}>
+                    <DeckCard deck={deck} />
+                  </View>
+                ))}
+              </View>
+            </CollapsibleContent>
+          </View>
 
-          <View style={styles.videoSection}>
+          <View
+            onLayout={(event) => {
+              sectionOffsets.current.videos = event.nativeEvent.layout.y;
+            }}
+            style={styles.videoSection}
+          >
             <View accessibilityElementsHidden style={styles.sectionDivider} />
 
             <SectionHeading
               expanded={videosExpanded}
               label="MY VIDEOS"
-              onPress={() => setVideosExpanded((expanded) => !expanded)}
+              onPress={toggleVideos}
             />
 
             <CollapsibleContent expanded={videosExpanded}>
@@ -180,11 +279,15 @@ export default function DeckLibraryScreen() {
                 <View style={[styles.videoGrid, { columnGap, rowGap: columnGap }]}>
                   {videos.map((video) => {
                     const deck = getDeckById(video.deckId);
+                    const videoReady = isRoundVideoReadyToSave(video);
+                    const exportFailed = video.exportStatus === 'failed';
+                    const exportPreparing = !videoReady && !exportFailed;
                     return (
                       <View key={video.id} style={[styles.videoCard, { width: videoWidth }]}>
                       <RoundVideoPlayer
                         isSaving={savingVideoId === video.id}
-                        onDelete={handleDelete}
+                        saveDisabled={!isRoundVideoReadyToSave(video)}
+                        onDelete={deleteFromPlayer}
                         onSave={handleSave}
                         video={video}
                         style={styles.video}
@@ -199,19 +302,52 @@ export default function DeckLibraryScreen() {
                           year: 'numeric',
                           hour: 'numeric',
                           minute: '2-digit',
-                          timeZoneName: 'short',
                         })}
                       </Text>
                       <View style={styles.videoActions}>
                         <Pressable
+                          accessibilityLabel={
+                            exportFailed
+                              ? 'Retry video export'
+                              : videoReady
+                                ? 'Save video'
+                                : 'Video is exporting'
+                          }
                           accessibilityRole="button"
-                          disabled={savingVideoId !== null}
-                          onPress={() => handleSave(video)}
-                          style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
+                          accessibilityState={{
+                            busy: exportPreparing || savingVideoId === video.id,
+                            disabled:
+                              savingVideoId !== null ||
+                              exportingVideoId !== null ||
+                              exportPreparing,
+                          }}
+                          disabled={
+                            savingVideoId !== null ||
+                            exportingVideoId !== null ||
+                            exportPreparing
+                          }
+                          onPress={() =>
+                            void (exportFailed
+                              ? handleRetryExport(video)
+                              : handlePortraitSave(video))
+                          }
+                          style={({ pressed }) => [
+                            styles.saveButton,
+                            exportPreparing && styles.disabled,
+                            pressed && (videoReady || exportFailed) && styles.pressed,
+                          ]}
                         >
-                          <Text style={styles.saveButtonText}>
-                            {savingVideoId === video.id ? 'EXPORTING…' : 'SAVE'}
-                          </Text>
+                          {exportPreparing ? (
+                            <ActivityIndicator color="#FFFFFF" size="small" />
+                          ) : (
+                            <Text numberOfLines={1} style={styles.saveButtonText}>
+                              {exportFailed
+                                ? 'RETRY'
+                                : savingVideoId === video.id
+                                  ? 'SAVING…'
+                                  : 'SAVE'}
+                            </Text>
+                          )}
                         </Pressable>
                         <Pressable
                           accessibilityRole="button"
@@ -244,6 +380,15 @@ export default function DeckLibraryScreen() {
         onConfirm={confirmDelete}
         title={deleteError ? 'Could not delete video' : 'Delete round video?'}
         visible={videoPendingDelete !== null}
+      />
+      <ConfirmationPrompt
+        cancelLabel={null}
+        confirmLabel="OK"
+        message={saveNotice?.message ?? ''}
+        onCancel={() => setSaveNotice(null)}
+        onConfirm={() => setSaveNotice(null)}
+        title={saveNotice?.title ?? ''}
+        visible={saveNotice !== null}
       />
     </SafeAreaView>
   );
@@ -412,4 +557,5 @@ const styles = StyleSheet.create({
   },
   deleteButtonText: { color: '#64748B', fontSize: 9, fontWeight: '900', letterSpacing: 0.7 },
   pressed: { opacity: 0.72, transform: [{ scale: 0.98 }] },
+  disabled: { opacity: 0.55 },
 });

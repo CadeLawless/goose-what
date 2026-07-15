@@ -13,10 +13,16 @@ import { getDeckById } from '@/data/decks';
 import { type RecordingPreparation, useRound } from '@/game/round-context';
 import { useForeheadPosition } from '@/hooks/use-forehead-position';
 import { colors, radius, spacing } from '@/theme';
-import { replaySound } from '@/utils/sound';
+import {
+  getRoundSoundSource,
+  playRoundSound,
+  preloadRoundSounds,
+  type RoundSoundId,
+} from '@/video/round-sounds';
 
 const GET_READY_SOUND_MS = 1050;
 const READY_TRANSITION_MS = 450;
+const ROUND_AUDIO_PLAYER_OPTIONS = { keepAudioSessionActive: true } as const;
 
 export default function ReadyScreen() {
   const { height } = useLandscapeDimensions();
@@ -25,6 +31,7 @@ export default function ReadyScreen() {
     cancelRecording,
     prepareRecording,
     recordOverlayEvent,
+    recordSoundCue,
     round,
     resetRound,
     startRecording,
@@ -41,16 +48,20 @@ export default function ReadyScreen() {
   const introStarted = useRef(false);
   const screenRef = useRef<View>(null);
   const { beginTransition, revealTransition } = useScreenshotTransition();
-  const getReadyPlayer = useAudioPlayer(require('../../assets/sounds/get-ready.wav'));
-  const count3Player = useAudioPlayer(require('../../assets/sounds/count-3.wav'));
-  const count2Player = useAudioPlayer(require('../../assets/sounds/count-2.wav'));
-  const count1Player = useAudioPlayer(require('../../assets/sounds/count-1.wav'));
+  const getReadyPlayer = useAudioPlayer(getRoundSoundSource('get-ready'), ROUND_AUDIO_PLAYER_OPTIONS);
+  const count3Player = useAudioPlayer(getRoundSoundSource('count-3'), ROUND_AUDIO_PLAYER_OPTIONS);
+  const count2Player = useAudioPlayer(getRoundSoundSource('count-2'), ROUND_AUDIO_PLAYER_OPTIONS);
+  const count1Player = useAudioPlayer(getRoundSoundSource('count-1'), ROUND_AUDIO_PLAYER_OPTIONS);
   const foreheadStatus = useForeheadPosition(round.status === 'ready');
   const positionReady = foreheadStatus === 'ready' || manualReady;
   const recordingPrepared =
     recordingPreparation === 'ready' ||
     recordingPreparation === 'permission-denied' ||
     recordingPreparation === 'unavailable';
+
+  useEffect(() => {
+    void preloadRoundSounds(['get-ready', 'count-3', 'count-2', 'count-1']);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -74,7 +85,7 @@ export default function ReadyScreen() {
   useEffect(() => {
     if (!positionReady || !orientationSettled || !recordingPrepared || isLeaving || introStarted.current) return;
     introStarted.current = true;
-    replaySound(getReadyPlayer);
+    void playRoundSound(getReadyPlayer, 'get-ready');
     const timeout = setTimeout(async () => {
       const started = await startRecording();
       if (recordingPreparation === 'ready' && !started) {
@@ -98,8 +109,13 @@ export default function ReadyScreen() {
   useEffect(() => {
     if (!introComplete || isLeaving) return;
     recordOverlayEvent({ kind: 'countdown', text: String(count) });
-    replaySound(count === 3 ? count3Player : count === 2 ? count2Player : count1Player);
-  }, [count, count1Player, count2Player, count3Player, introComplete, isLeaving, recordOverlayEvent]);
+    const sound: RoundSoundId = count === 3 ? 'count-3' : count === 2 ? 'count-2' : 'count-1';
+    recordSoundCue(sound);
+    void playRoundSound(
+      count === 3 ? count3Player : count === 2 ? count2Player : count1Player,
+      sound,
+    );
+  }, [count, count1Player, count2Player, count3Player, introComplete, isLeaving, recordOverlayEvent, recordSoundCue]);
 
   useEffect(() => {
     if (isLeaving) return;
@@ -139,6 +155,11 @@ export default function ReadyScreen() {
   const handleRetryCamera = async () => {
     setRecordingPreparation('preparing');
     setRecordingPreparation(await prepareRecording());
+  };
+
+  const handlePlayWithoutVideo = async () => {
+    await cancelRecording();
+    setRecordingPreparation('unavailable');
   };
 
   const handleCancel = async () => {
@@ -186,6 +207,13 @@ export default function ReadyScreen() {
                     style={styles.manualButton}
                   >
                     <Text style={styles.manualButtonText}>RETRY CAMERA</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => void handlePlayWithoutVideo()}
+                    style={styles.skipVideoButton}
+                  >
+                    <Text style={styles.skipVideoButtonText}>PLAY WITHOUT VIDEO</Text>
                   </Pressable>
                 </>
               ) : positionReady ? (
@@ -306,4 +334,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   manualButtonText: { color: '#000000', fontSize: 12, fontWeight: '900', letterSpacing: 1.2 },
+  skipVideoButton: { marginTop: spacing.md, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
+  skipVideoButtonText: { color: colors.white, fontSize: 11, fontWeight: '900', letterSpacing: 1.1 },
 });

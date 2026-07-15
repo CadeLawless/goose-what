@@ -1,13 +1,20 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
+import { logVideoDiagnostic, warnVideoDiagnostic } from '@/video/video-diagnostics';
+
 const STORAGE_KEY = 'whatz-it:round-videos:v1';
 const MAX_STORED_VIDEOS = 10;
 const VIDEO_DIRECTORY_NAME = 'round-videos';
+const COMPLETED_EXPORT_PATTERN = /^(\d+-[a-z0-9]+)-export\.mp4$/i;
 
 export type RoundVideo = {
   id: string;
   uri: string;
+  audioUri?: string;
+  exportUri?: string;
+  exportIncludesOverlays?: boolean;
+  exportStatus?: 'preparing' | 'ready' | 'failed';
   deckId: string;
   createdAt: number;
   events?: RoundVideoEvent[];
@@ -17,6 +24,13 @@ export type RoundVideoEvent = {
   atMs: number;
   kind: 'countdown' | 'card' | 'correct' | 'passed' | 'times-up';
   text: string;
+  timerEndsAtMs?: number;
+};
+
+type StoredRoundVideo = Omit<RoundVideo, 'uri' | 'audioUri' | 'exportUri'> & {
+  uri: string;
+  audioUri?: string;
+  exportUri?: string;
 };
 
 function readExtension(uri: string) {
@@ -24,11 +38,11 @@ function readExtension(uri: string) {
   return match?.[1] ?? 'mp4';
 }
 
-async function readStoredMetadata(): Promise<RoundVideo[]> {
+async function readStoredMetadata(): Promise<StoredRoundVideo[]> {
   const stored = await AsyncStorage.getItem(STORAGE_KEY);
   if (!stored) return [];
   try {
-    const parsed = JSON.parse(stored) as RoundVideo[];
+    const parsed = JSON.parse(stored) as StoredRoundVideo[];
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
@@ -36,20 +50,55 @@ async function readStoredMetadata(): Promise<RoundVideo[]> {
 }
 
 async function writeStoredMetadata(videos: RoundVideo[]) {
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(videos));
+  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(videos.map(toStoredRoundVideo)));
 }
+
+const activeExports = new Map<string, Promise<RoundVideo>>();
 
 export async function loadRoundVideos() {
   if (Platform.OS === 'web') return [];
-  const { File } = await import('expo-file-system');
-  const videos = await readStoredMetadata();
-  const available = videos.filter((video) => new File(video.uri).exists);
-  if (available.length !== videos.length) await writeStoredMetadata(available);
-  return available.sort((a, b) => b.createdAt - a.createdAt);
+  const { File, storedVideos, videoDirectory, videos } = await readHydratedMetadata();
+  const available = videos
+    .filter((video) => new File(video.uri).exists)
+    .map((video) => {
+      const audioUri = video.audioUri && new File(video.audioUri).exists ? video.audioUri : undefined;
+      let exportUri = video.exportUri && new File(video.exportUri).exists ? video.exportUri : undefined;
+      const hasLegacyIosOverlayExport =
+        Platform.OS === 'ios' &&
+        !!exportUri &&
+        !!video.events?.length &&
+        video.exportIncludesOverlays === undefined;
+      if (hasLegacyIosOverlayExport && exportUri) {
+        new File(exportUri).delete();
+        exportUri = undefined;
+      }
+      return {
+        ...video,
+        audioUri,
+        exportUri,
+        exportIncludesOverlays: exportUri ? video.exportIncludesOverlays : undefined,
+        exportStatus: exportUri
+          ? ('ready' as const)
+          : video.events?.length
+            ? video.exportStatus === 'failed'
+              ? ('failed' as const)
+              : ('preparing' as const)
+            : ('ready' as const),
+      };
+    });
+  const recovered = recoverCompletedExports(videoDirectory, available, File);
+  const next = [...available, ...recovered]
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, MAX_STORED_VIDEOS);
+  if (JSON.stringify(next.map(toStoredRoundVideo)) !== JSON.stringify(storedVideos)) {
+    await writeStoredMetadata(next);
+  }
+  return next;
 }
 
 export async function storeRoundVideo(
   temporaryUri: string,
+  temporaryAudioUri: string | undefined,
   deckId: string,
   events: RoundVideoEvent[] = [],
 ) {
@@ -62,30 +111,75 @@ export async function storeRoundVideo(
   const destination = new File(videoDirectory, `${id}.${readExtension(temporaryUri)}`);
   await new File(temporaryUri).copy(destination);
 
-  const video: RoundVideo = { id, uri: destination.uri, deckId, createdAt, events };
+  let audioUri: string | undefined;
+  if (temporaryAudioUri) {
+    const audioDestination = new File(
+      videoDirectory,
+      `${id}-audio.${readExtension(temporaryAudioUri)}`,
+    );
+    await new File(temporaryAudioUri).copy(audioDestination);
+    audioUri = audioDestination.uri;
+  }
+
+  logVideoDiagnostic('round files persisted', {
+    audioDestinationExists: audioUri ? new File(audioUri).exists : false,
+    audioDestinationSize: audioUri ? new File(audioUri).size : 0,
+    audioUri,
+    sourceAudioExists: temporaryAudioUri ? new File(temporaryAudioUri).exists : false,
+    sourceAudioSize: temporaryAudioUri ? new File(temporaryAudioUri).size : 0,
+    sourceAudioUri: temporaryAudioUri,
+    videoDestinationExists: destination.exists,
+    videoDestinationSize: destination.size,
+    videoUri: destination.uri,
+  });
+
+  const video: RoundVideo = {
+    id,
+    uri: destination.uri,
+    audioUri,
+    exportStatus: events.length ? 'preparing' : 'ready',
+    deckId,
+    createdAt,
+    events,
+  };
   const previous = await loadRoundVideos();
   const next = [video, ...previous].slice(0, MAX_STORED_VIDEOS);
   const removed = previous.filter((item) => !next.some((kept) => kept.id === item.id));
-  removed.forEach((item) => {
-    const file = new File(item.uri);
-    if (file.exists) file.delete();
-  });
+  removed.forEach((item) => deleteVideoFiles(item, File));
   await writeStoredMetadata(next);
   return video;
 }
 
 export async function deleteRoundVideo(id: string) {
   if (Platform.OS === 'web') return [];
-  const { File } = await import('expo-file-system');
-  const videos = await readStoredMetadata();
+  const { File, videos } = await readHydratedMetadata();
   const removed = videos.find((video) => video.id === id);
-  if (removed) {
-    const file = new File(removed.uri);
-    if (file.exists) file.delete();
-  }
+  if (removed) deleteVideoFiles(removed, File);
   const next = videos.filter((video) => video.id !== id);
   await writeStoredMetadata(next);
   return next;
+}
+
+export function isRoundVideoReadyToSave(video: RoundVideo) {
+  return video.events?.length ? video.exportStatus === 'ready' && !!video.exportUri : true;
+}
+
+export function prepareRoundVideoExport(video: RoundVideo) {
+  const existing = activeExports.get(video.id);
+  if (existing) return existing;
+  const preparing = prepareRoundVideoExportOnce(video).finally(() => {
+    activeExports.delete(video.id);
+  });
+  activeExports.set(video.id, preparing);
+  return preparing;
+}
+
+export async function prepareRoundVideoExports(videos: RoundVideo[]) {
+  const prepared: RoundVideo[] = [];
+  for (const video of videos) {
+    prepared.push(isRoundVideoReadyToSave(video) ? video : await prepareRoundVideoExport(video));
+  }
+  return prepared;
 }
 
 export async function saveRoundVideoToDevice(video: RoundVideo) {
@@ -93,25 +187,331 @@ export async function saveRoundVideoToDevice(video: RoundVideo) {
   const { Asset, requestPermissionsAsync } = await import('expo-media-library');
   const permission = await requestPermissionsAsync(true, ['video']);
   if (!permission.granted) throw new Error('Media library permission was not granted.');
-  let exportUri = video.uri;
+  const saveUri = video.events?.length ? video.exportUri : video.uri;
+  if (!saveUri) throw new Error('This video is still being prepared.');
+  const { File } = await import('expo-file-system');
+  const saveFile = new File(saveUri);
+  const saveAudioTrackCount = await inspectVideoAudioTrackCount(saveUri);
+  const nativeAudioValidated = await usesReliableNativeAudioValidation();
+  logVideoDiagnostic('media library save started', {
+    audioUri: video.audioUri,
+    exportIncludesOverlays: video.exportIncludesOverlays,
+    exportUri: video.exportUri,
+    saveFileExists: saveFile.exists,
+    saveFileSize: saveFile.size,
+    saveAudioTrackCount,
+    nativeAudioValidated,
+    saveUri,
+    sourceVideoUri: video.uri,
+  });
+  if (video.audioUri && saveAudioTrackCount === 0 && !nativeAudioValidated) {
+    throw new Error(
+      'The exported video has no audio track, so it was not saved. Please send the [RoundVideo] terminal logs so this can be diagnosed.',
+    );
+  }
+  if (video.audioUri && saveAudioTrackCount === 0 && nativeAudioValidated) {
+    warnVideoDiagnostic(
+      'Expo Video reported no audio tracks after native validation succeeded',
+      'Continuing because exporter version 3 validated the finished MP4 with AVFoundation.',
+      { saveUri },
+    );
+  }
+  await Asset.create(saveUri);
+  logVideoDiagnostic('media library save completed', { saveUri });
+}
+
+async function prepareRoundVideoExportOnce(video: RoundVideo): Promise<RoundVideo> {
+  if (Platform.OS === 'web' || !video.events?.length) {
+    return updateStoredVideo({ ...video, exportStatus: 'ready' });
+  }
+  const { Directory, File, Paths } = await import('expo-file-system');
+  if (video.exportUri && new File(video.exportUri).exists) {
+    return updateStoredVideo({ ...video, exportStatus: 'ready' });
+  }
+
+  await updateStoredVideo({
+    ...video,
+    exportUri: undefined,
+    exportIncludesOverlays: undefined,
+    exportStatus: 'preparing',
+  });
+  let temporaryExportUri: string | undefined;
   try {
-    if (video.events?.length) {
-      try {
-        const { exportOverlayVideo } = await import('whatz-it-video-export');
-        exportUri = await exportOverlayVideo(video.uri, video.events);
-      } catch {
-        // Saving the original recording is always better than blocking the user.
-        // This also keeps older dev builds usable when their native compositor
-        // cannot process a legacy video without an audio track.
-        exportUri = video.uri;
-      }
+    const {
+      exportOverlayVideo,
+      getIosVideoExportVersion,
+      supportsFixedIosOverlayExport,
+      supportsReliableIosAudioExport,
+    } =
+      await import('whatz-it-video-export');
+    // Existing iOS development builds contain an overlay animation that leaves every
+    // prior card visible. Export clean video plus audio until the corrected native
+    // exporter arrives in the eventual production build.
+    const exportEvents =
+      Platform.OS === 'ios' && !supportsFixedIosOverlayExport() ? [] : video.events;
+    const audioFile = video.audioUri ? new File(video.audioUri) : null;
+    const sourceVideoFile = new File(video.uri);
+    const iosVideoExportVersion = Platform.OS === 'ios' ? getIosVideoExportVersion() : null;
+    const nativeAudioValidated = Platform.OS === 'ios' && supportsReliableIosAudioExport();
+    logVideoDiagnostic('native export started', {
+      audioFileExists: audioFile?.exists ?? false,
+      audioFileSize: audioFile?.size ?? 0,
+      audioUri: video.audioUri,
+      exportEventCount: exportEvents.length,
+      iosVideoExportVersion,
+      nativeAudioValidated,
+      sourceEventCount: video.events.length,
+      sourceVideoExists: sourceVideoFile.exists,
+      sourceVideoSize: sourceVideoFile.size,
+      sourceVideoUri: video.uri,
+      supportsFixedIosOverlays: supportsFixedIosOverlayExport(),
+      supportsReliableIosAudio: supportsReliableIosAudioExport(),
+    });
+    if (
+      Platform.OS === 'ios' &&
+      video.audioUri &&
+      !supportsReliableIosAudioExport()
+    ) {
+      throw new Error(
+        'This installed app build does not contain the reliable audio exporter. Install the updated build, then retry this export.',
+      );
     }
-    await Asset.create(exportUri);
+    const branding = await loadExportBrandingUris();
+    temporaryExportUri = await exportOverlayVideo(
+      video.uri,
+      video.audioUri ?? null,
+      exportEvents,
+      branding?.headshotUri ?? null,
+      branding?.wordmarkUri ?? null,
+    );
+    const videoDirectory = new Directory(Paths.document, VIDEO_DIRECTORY_NAME);
+    videoDirectory.create({ idempotent: true, intermediates: true });
+    const destination = new File(videoDirectory, `${video.id}-export.mp4`);
+    if (destination.exists) destination.delete();
+    await new File(temporaryExportUri).copy(destination);
+    const exportedAudioTrackCount = await inspectVideoAudioTrackCount(destination.uri);
+    logVideoDiagnostic('native export completed', {
+      destinationExists: destination.exists,
+      destinationSize: destination.size,
+      destinationUri: destination.uri,
+      exportedAudioTrackCount,
+      temporaryExportUri,
+    });
+    if (video.audioUri && exportedAudioTrackCount === 0 && !nativeAudioValidated) {
+      throw new Error('The native exporter returned a video with no audio track.');
+    }
+    if (video.audioUri && exportedAudioTrackCount === 0 && nativeAudioValidated) {
+      warnVideoDiagnostic(
+        'Expo Video reported no audio tracks after native export validation succeeded',
+        'Accepting the export so its actual embedded audio can be played and saved.',
+        { destinationUri: destination.uri },
+      );
+    }
+    return updateStoredVideo({
+      ...video,
+      exportUri: destination.uri,
+      exportIncludesOverlays: exportEvents.length > 0,
+      exportStatus: 'ready',
+    });
+  } catch (error) {
+    warnVideoDiagnostic('native export failed', error, {
+      audioUri: video.audioUri,
+      sourceVideoUri: video.uri,
+      temporaryExportUri,
+    });
+    return updateStoredVideo({
+      ...video,
+      exportUri: undefined,
+      exportIncludesOverlays: undefined,
+      exportStatus: 'failed',
+    });
   } finally {
-    if (exportUri !== video.uri) {
-      const { File } = await import('expo-file-system');
-      const exportedFile = new File(exportUri);
-      if (exportedFile.exists) exportedFile.delete();
+    if (temporaryExportUri) {
+      const temporaryFile = new File(temporaryExportUri);
+      if (temporaryFile.exists) temporaryFile.delete();
     }
   }
+}
+
+async function loadExportBrandingUris() {
+  try {
+    const { Asset } = await import('expo-asset');
+    const [headshot, wordmark] = await Asset.loadAsync([
+      require('../../assets/images/branding/albert-headshot.png'),
+      require('../../assets/images/branding/whatz-it-wordmark.png'),
+    ]);
+    return {
+      headshotUri: headshot.localUri ?? headshot.uri,
+      wordmarkUri: wordmark.localUri ?? wordmark.uri,
+    };
+  } catch (error) {
+    warnVideoDiagnostic('export branding assets unavailable', error);
+    return null;
+  }
+}
+
+async function usesReliableNativeAudioValidation() {
+  if (Platform.OS !== 'ios') return false;
+  const { supportsReliableIosAudioExport } = await import('whatz-it-video-export');
+  return supportsReliableIosAudioExport();
+}
+
+async function inspectVideoAudioTrackCount(uri: string): Promise<number | null> {
+  const { createVideoPlayer } = await import('expo-video');
+  const player = createVideoPlayer(uri);
+
+  try {
+    return await new Promise<number | null>((resolve) => {
+      let settled = false;
+      const cleanup: (() => void)[] = [];
+      const finish = (audioTrackCount: number | null) => {
+        if (settled) return;
+        settled = true;
+        cleanup.forEach((remove) => remove());
+        resolve(audioTrackCount);
+      };
+
+      const sourceSubscription = player.addListener(
+        'sourceLoad',
+        ({ availableAudioTracks, duration, videoSource }) => {
+          logVideoDiagnostic('video audio tracks inspected', {
+            audioTrackCount: availableAudioTracks.length,
+            audioTracks: availableAudioTracks,
+            duration,
+            uri,
+            videoSource,
+          });
+          finish(availableAudioTracks.length);
+        },
+      );
+      cleanup.push(() => sourceSubscription.remove());
+
+      const statusSubscription = player.addListener('statusChange', ({ error, status }) => {
+        if (status !== 'error') return;
+        warnVideoDiagnostic('video audio track inspection failed', error?.message ?? status, {
+          uri,
+        });
+        finish(null);
+      });
+      cleanup.push(() => statusSubscription.remove());
+
+      const timeout = setTimeout(() => {
+        warnVideoDiagnostic('video audio track inspection timed out', 'Metadata did not load.', {
+          status: player.status,
+          uri,
+        });
+        finish(null);
+      }, 5000);
+      cleanup.push(() => clearTimeout(timeout));
+    });
+  } finally {
+    player.release();
+  }
+}
+
+async function updateStoredVideo(video: RoundVideo) {
+  const { videos } = await readHydratedMetadata();
+  const next = videos.map((item) => (item.id === video.id ? video : item));
+  await writeStoredMetadata(next);
+  return video;
+}
+
+async function readHydratedMetadata() {
+  const { Directory, File, Paths } = await import('expo-file-system');
+  const videoDirectory = new Directory(Paths.document, VIDEO_DIRECTORY_NAME);
+  videoDirectory.create({ idempotent: true, intermediates: true });
+  const storedVideos = await readStoredMetadata();
+  const videos = storedVideos.map((video) =>
+    hydrateStoredRoundVideo(video, videoDirectory, File),
+  );
+  return { File, storedVideos, videoDirectory, videos };
+}
+
+function hydrateStoredRoundVideo(
+  video: StoredRoundVideo,
+  videoDirectory: import('expo-file-system').Directory,
+  FileType: typeof import('expo-file-system').File,
+): RoundVideo {
+  return {
+    ...video,
+    uri: resolveManagedFileUri(video.uri, videoDirectory, FileType),
+    audioUri: video.audioUri
+      ? resolveManagedFileUri(video.audioUri, videoDirectory, FileType)
+      : undefined,
+    exportUri: video.exportUri
+      ? resolveManagedFileUri(video.exportUri, videoDirectory, FileType)
+      : undefined,
+  };
+}
+
+function toStoredRoundVideo(video: RoundVideo): StoredRoundVideo {
+  return {
+    ...video,
+    uri: getManagedFileName(video.uri),
+    audioUri: video.audioUri ? getManagedFileName(video.audioUri) : undefined,
+    exportUri: video.exportUri ? getManagedFileName(video.exportUri) : undefined,
+  };
+}
+
+function resolveManagedFileUri(
+  storedUri: string,
+  videoDirectory: import('expo-file-system').Directory,
+  FileType: typeof import('expo-file-system').File,
+) {
+  return new FileType(videoDirectory, getManagedFileName(storedUri)).uri;
+}
+
+function getManagedFileName(uri: string) {
+  const path = uri.split(/[?#]/, 1)[0].replace(/\\/g, '/');
+  const fileName = path.slice(path.lastIndexOf('/') + 1);
+  try {
+    return decodeURIComponent(fileName);
+  } catch {
+    return fileName;
+  }
+}
+
+function recoverCompletedExports(
+  videoDirectory: import('expo-file-system').Directory,
+  videos: RoundVideo[],
+  FileType: typeof import('expo-file-system').File,
+) {
+  const knownFiles = new Set(
+    videos.flatMap((video) => [video.uri, video.audioUri, video.exportUri].filter(Boolean)),
+  );
+  const recovered = videoDirectory
+    .list()
+    .filter((entry): entry is import('expo-file-system').File => entry instanceof FileType)
+    .flatMap((file) => {
+      const match = file.name.match(COMPLETED_EXPORT_PATTERN);
+      if (!match || knownFiles.has(file.uri)) return [];
+      const createdAt = Number(match[1].split('-', 1)[0]);
+      return [
+        {
+          id: match[1],
+          uri: file.uri,
+          exportStatus: 'ready' as const,
+          deckId: 'recovered',
+          createdAt: Number.isFinite(createdAt) ? createdAt : file.creationTime ?? Date.now(),
+        },
+      ];
+    });
+  if (recovered.length > 0) {
+    logVideoDiagnostic('completed round videos recovered from device storage', {
+      recoveredCount: recovered.length,
+      recoveredFiles: recovered.map((video) => getManagedFileName(video.uri)),
+    });
+  }
+  return recovered;
+}
+
+function deleteVideoFiles(
+  video: RoundVideo,
+  FileType: typeof import('expo-file-system').File,
+) {
+  [video.uri, video.audioUri, video.exportUri].forEach((uri) => {
+    if (!uri) return;
+    const file = new FileType(uri);
+    if (file.exists) file.delete();
+  });
 }

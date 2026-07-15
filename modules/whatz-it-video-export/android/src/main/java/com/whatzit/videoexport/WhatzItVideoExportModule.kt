@@ -2,15 +2,14 @@ package com.whatzit.videoexport
 
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.RectF
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
-import android.text.Layout
-import android.text.StaticLayout
-import android.text.TextPaint
 import androidx.annotation.OptIn
 import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
@@ -34,12 +33,14 @@ import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.max
+import kotlin.math.min
 
 @OptimizedRecord
 class VideoOverlayEvent(
   @Field val atMs: Double,
   @Field val kind: String,
-  @Field val text: String
+  @Field val text: String,
+  @Field val timerEndsAtMs: Double? = null
 ) : Record
 
 @OptIn(UnstableApi::class)
@@ -55,54 +56,76 @@ class WhatzItVideoExportModule : Module() {
 
     AsyncFunction("exportOverlayVideo") {
         inputUri: String,
+        audioUri: String?,
         events: List<VideoOverlayEvent>,
         promise: Promise ->
-      val context = appContext.reactContext?.applicationContext
-      if (context == null) {
-        promise.reject("ERR_VIDEO_EXPORT", "The Android application context is unavailable.", null)
-        return@AsyncFunction
-      }
+      startOverlayExport(inputUri, audioUri, events, null, null, promise)
+    }
 
-      Handler(Looper.getMainLooper()).post {
-        val exportId = UUID.randomUUID().toString()
-        val outputFile = File(context.cacheDir, "whatz-it-overlay-$exportId.mp4")
-        val overlay = TimedCardOverlay(events.sortedBy { it.atMs })
-        val effects = Effects(
-          emptyList<AudioProcessor>(),
-          listOf<Effect>(OverlayEffect(listOf(overlay)))
-        )
-        val editedMediaItem = EditedMediaItem.Builder(MediaItem.fromUri(Uri.parse(inputUri)))
-          .setEffects(effects)
-          .build()
+    AsyncFunction("exportBrandedOverlayVideo") {
+        inputUri: String,
+        audioUri: String?,
+        events: List<VideoOverlayEvent>,
+        headshotUri: String?,
+        wordmarkUri: String?,
+        promise: Promise ->
+      startOverlayExport(inputUri, audioUri, events, headshotUri, wordmarkUri, promise)
+    }
+  }
 
-        val listener = object : Transformer.Listener {
-          override fun onCompleted(composition: Composition, exportResult: ExportResult) {
-            activeExports.remove(exportId)
-            promise.resolve(Uri.fromFile(outputFile).toString())
-          }
+  private fun startOverlayExport(
+    inputUri: String,
+    audioUri: String?,
+    events: List<VideoOverlayEvent>,
+    headshotUri: String?,
+    wordmarkUri: String?,
+    promise: Promise
+  ) {
+    val context = appContext.reactContext?.applicationContext
+    if (context == null) {
+      promise.reject("ERR_VIDEO_EXPORT", "The Android application context is unavailable.", null)
+      return
+    }
 
-          override fun onError(
-            composition: Composition,
-            exportResult: ExportResult,
-            exportException: ExportException
-          ) {
-            activeExports.remove(exportId)
-            outputFile.delete()
-            promise.reject("ERR_VIDEO_EXPORT", exportException.localizedMessage, exportException)
-          }
+    Handler(Looper.getMainLooper()).post {
+      val exportId = UUID.randomUUID().toString()
+      val outputFile = File(context.cacheDir, "whatz-it-overlay-$exportId.mp4")
+      val overlay = TimedCardOverlay(events.sortedBy { it.atMs }, headshotUri, wordmarkUri)
+      val effects = Effects(
+        emptyList<AudioProcessor>(),
+        listOf<Effect>(OverlayEffect(listOf(overlay)))
+      )
+      val editedMediaItem = EditedMediaItem.Builder(MediaItem.fromUri(Uri.parse(inputUri)))
+        .setEffects(effects)
+        .build()
+
+      val listener = object : Transformer.Listener {
+        override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+          activeExports.remove(exportId)
+          promise.resolve(Uri.fromFile(outputFile).toString())
         }
 
-        try {
-          val transformer = Transformer.Builder(context)
-            .addListener(listener)
-            .build()
-          activeExports[exportId] = transformer
-          transformer.start(editedMediaItem, outputFile.absolutePath)
-        } catch (error: Exception) {
+        override fun onError(
+          composition: Composition,
+          exportResult: ExportResult,
+          exportException: ExportException
+        ) {
           activeExports.remove(exportId)
           outputFile.delete()
-          promise.reject("ERR_VIDEO_EXPORT", error.localizedMessage, error)
+          promise.reject("ERR_VIDEO_EXPORT", exportException.localizedMessage, exportException)
         }
+      }
+
+      try {
+        val transformer = Transformer.Builder(context)
+          .addListener(listener)
+          .build()
+        activeExports[exportId] = transformer
+        transformer.start(editedMediaItem, outputFile.absolutePath)
+      } catch (error: Exception) {
+        activeExports.remove(exportId)
+        outputFile.delete()
+        promise.reject("ERR_VIDEO_EXPORT", error.localizedMessage, error)
       }
     }
   }
@@ -110,50 +133,145 @@ class WhatzItVideoExportModule : Module() {
 
 @OptIn(UnstableApi::class)
 private class TimedCardOverlay(
-  private val events: List<VideoOverlayEvent>
+  private val events: List<VideoOverlayEvent>,
+  headshotUri: String?,
+  wordmarkUri: String?
 ) : CanvasOverlay(true) {
   private val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-  private val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+  private val answerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
     typeface = android.graphics.Typeface.DEFAULT_BOLD
+    textAlign = Paint.Align.CENTER
   }
+  private val timerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    typeface = android.graphics.Typeface.DEFAULT_BOLD
+    textAlign = Paint.Align.CENTER
+  }
+  private val brandingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    alpha = 235
+    isFilterBitmap = true
+  }
+  private val headshot = decodeBrandingBitmap(headshotUri)
+  private val wordmark = decodeBrandingBitmap(wordmarkUri)
 
   override fun onDraw(canvas: Canvas, presentationTimeUs: Long) {
     canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+    drawBranding(canvas)
     val timeMs = presentationTimeUs / 1_000.0
     val event = events.lastOrNull { it.atMs <= timeMs } ?: return
     val canvasWidth = canvas.width.toFloat()
     val canvasHeight = canvas.height.toFloat()
-    val width = canvasWidth * 0.43f
-    val height = max(canvasHeight * 0.16f, width * 0.42f)
-    val margin = canvasWidth * 0.05f
-    val bounds = RectF(margin, canvasHeight - height - margin, margin + width, canvasHeight - margin)
+    val text = event.text.trim().replace(Regex("\\s+"), " ")
+    val horizontalPadding = canvasWidth * 0.0198f
+    val verticalPadding = canvasHeight * 0.0154f
+    val maximumTextWidth = max(1f, canvasWidth - horizontalPadding * 2)
+    answerPaint.textSize = canvasHeight * 0.056f
+    var answerWidth = answerPaint.measureText(text)
+    if (answerWidth > maximumTextWidth) {
+      answerPaint.textSize = max(0.1f, answerPaint.textSize * maximumTextWidth / answerWidth)
+      answerWidth = answerPaint.measureText(text)
+    }
+    val timerText = timerTextFor(event, timeMs)
+    timerPaint.textSize = canvasHeight * 0.028f
+    val timerWidth = timerText?.let { timerPaint.measureText(it) } ?: 0f
+    val minimumWidth = canvasWidth * 0.3f
+    val width = min(canvasWidth, max(minimumWidth, max(answerWidth, timerWidth) + horizontalPadding * 2))
+    val answerHeight = lineHeight(answerPaint)
+    val timerHeight = if (timerText == null) 0f else lineHeight(timerPaint)
+    val timerSpacing = if (timerText == null) 0f else canvasHeight * 0.0051f
+    val contentHeight = answerHeight + timerSpacing + timerHeight
+    val height = max(canvasHeight * 0.123f, contentHeight + verticalPadding * 2)
+    val margin = canvasHeight * 0.133f
+    val left = (canvasWidth - width) / 2f
+    val bounds = RectF(left, canvasHeight - height - margin, left + width, canvasHeight - margin)
     val colors = colorsFor(event.kind)
 
     backgroundPaint.color = colors.first
-    canvas.drawRoundRect(bounds, width * 0.045f, width * 0.045f, backgroundPaint)
+    val cornerRadius = min(width, height) * 0.25f
+    canvas.drawRoundRect(bounds, cornerRadius, cornerRadius, backgroundPaint)
 
-    val horizontalPadding = width * 0.07f
-    val textWidth = (width - horizontalPadding * 2).toInt().coerceAtLeast(1)
-    textPaint.color = colors.second
-    textPaint.textSize = width * 0.09f
-    val layout = StaticLayout.Builder.obtain(event.text, 0, event.text.length, textPaint, textWidth)
-      .setAlignment(Layout.Alignment.ALIGN_CENTER)
-      .setIncludePad(false)
-      .setMaxLines(2)
-      .setEllipsize(android.text.TextUtils.TruncateAt.END)
-      .build()
-    val textTop = bounds.top + (height - layout.height) / 2f
+    val contentTop = bounds.top + (height - contentHeight) / 2f
+    answerPaint.color = colors.second
+    val answerMetrics = answerPaint.fontMetrics
+    val answerBaseline = contentTop - answerMetrics.ascent
+    canvas.drawText(text, bounds.centerX(), answerBaseline, answerPaint)
+    if (timerText != null) {
+      timerPaint.color = colors.second
+      val timerMetrics = timerPaint.fontMetrics
+      val timerBaseline = contentTop + answerHeight + timerSpacing - timerMetrics.ascent
+      canvas.drawText(timerText, bounds.centerX(), timerBaseline, timerPaint)
+    }
+  }
 
-    canvas.save()
-    canvas.translate(bounds.left + horizontalPadding, textTop)
-    layout.draw(canvas)
-    canvas.restore()
+  private fun timerTextFor(event: VideoOverlayEvent, timeMs: Double): String? {
+    val timerEndsAtMs = event.timerEndsAtMs ?: return null
+    if (event.kind != "card" && event.kind != "correct" && event.kind != "passed") return null
+    val remainingSeconds = max(0, kotlin.math.ceil((timerEndsAtMs - timeMs) / 1_000.0).toInt())
+    return "%d:%02d".format(remainingSeconds / 60, remainingSeconds % 60)
+  }
+
+  private fun lineHeight(paint: Paint): Float {
+    val metrics = paint.fontMetrics
+    return metrics.descent - metrics.ascent
+  }
+
+  private fun drawBranding(canvas: Canvas) {
+    if (headshot == null && wordmark == null) return
+    val canvasHeight = canvas.height.toFloat()
+    val margin = canvasHeight * 0.035f
+    val gap = canvasHeight * 0.01f
+    val headshotHeight = if (headshot == null) 0f else canvasHeight * 0.144f
+    val headshotWidth = headshot?.let {
+      headshotHeight * it.width.toFloat() / max(1, it.height).toFloat()
+    } ?: 0f
+    val wordmarkWidth = if (wordmark == null) 0f else canvasHeight * 0.288f
+    val wordmarkHeight = wordmark?.let {
+      wordmarkWidth * it.height.toFloat() / max(1, it.width).toFloat()
+    } ?: 0f
+    val actualGap = if (headshot != null && wordmark != null) gap else 0f
+    val brandingHeight = max(headshotHeight, wordmarkHeight)
+    headshot?.let {
+      canvas.drawBitmap(
+        it,
+        null,
+        RectF(
+          margin,
+          margin + (brandingHeight - headshotHeight) / 2f,
+          margin + headshotWidth,
+          margin + (brandingHeight + headshotHeight) / 2f
+        ),
+        brandingPaint
+      )
+    }
+    wordmark?.let {
+      val left = margin + headshotWidth + actualGap
+      canvas.drawBitmap(
+        it,
+        null,
+        RectF(
+          left,
+          margin + (brandingHeight - wordmarkHeight) / 2f,
+          left + wordmarkWidth,
+          margin + (brandingHeight + wordmarkHeight) / 2f
+        ),
+        brandingPaint
+      )
+    }
+  }
+
+  private fun decodeBrandingBitmap(uri: String?): Bitmap? {
+    val path = uri?.let { Uri.parse(it) }?.path ?: return null
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(path, bounds)
+    var sampleSize = 1
+    while (max(bounds.outWidth, bounds.outHeight) / sampleSize > 1_200) sampleSize *= 2
+    val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+    return BitmapFactory.decodeFile(path, options)
   }
 
   private fun colorsFor(kind: String): Pair<Int, Int> = when (kind) {
-    "correct" -> Color.argb(199, 135, 237, 170) to Color.rgb(34, 45, 58)
-    "passed" -> Color.argb(199, 255, 119, 43) to Color.rgb(82, 38, 8)
-    "countdown", "times-up" -> Color.argb(199, 50, 139, 232) to Color.WHITE
-    else -> Color.argb(199, 247, 245, 239) to Color.rgb(50, 139, 232)
+    "correct" -> Color.argb(163, 135, 237, 170) to Color.rgb(34, 45, 58)
+    "passed" -> Color.argb(163, 255, 119, 43) to Color.rgb(82, 38, 8)
+    "countdown", "times-up" -> Color.argb(163, 50, 139, 232) to Color.WHITE
+    else -> Color.argb(163, 247, 245, 239) to Color.rgb(50, 139, 232)
   }
 }

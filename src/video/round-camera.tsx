@@ -1,5 +1,5 @@
-import { setAudioModeAsync } from 'expo-audio';
-import { forwardRef, useImperativeHandle, useRef } from 'react';
+import { RecordingPresets, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
+import { forwardRef, useCallback, useImperativeHandle, useRef } from 'react';
 import { Platform, StyleSheet } from 'react-native';
 import {
   Camera,
@@ -9,15 +9,24 @@ import {
   useVideoOutput,
 } from 'react-native-vision-camera';
 
+import { logVideoDiagnostic, warnVideoDiagnostic } from '@/video/video-diagnostics';
+
 export type RoundCameraRef = {
-  startRecording: (maxDuration: number) => Promise<boolean>;
-  stopRecording: () => Promise<string | null>;
+  startRecording: (maxDuration: number) => Promise<number | null>;
+  stopRecording: () => Promise<RoundCapture | null>;
   cancelRecording: () => Promise<void>;
+};
+
+export type RoundCapture = {
+  videoUri: string;
+  microphoneUri?: string;
+  microphoneOffsetMs: number;
 };
 
 type RoundCameraProps = {
   enabled: boolean;
-  onError: () => void;
+  microphoneEnabled: boolean;
+  onError: (error: unknown) => void;
   onReady: () => void;
 };
 
@@ -25,15 +34,18 @@ export async function requestRoundCameraPermissions() {
   const cameraGranted =
     VisionCamera.cameraPermissionStatus === 'authorized' ||
     (await VisionCamera.requestCameraPermission());
-  if (!cameraGranted) return false;
+  if (!cameraGranted) return { cameraGranted: false, microphoneGranted: false };
 
   const microphoneGranted =
     VisionCamera.microphonePermissionStatus === 'authorized' ||
     (await VisionCamera.requestMicrophonePermission());
-  if (!microphoneGranted) return false;
-
-  await prepareRoundRecordingAudio();
-  return true;
+  logVideoDiagnostic('permissions resolved', {
+    cameraGranted,
+    cameraStatus: VisionCamera.cameraPermissionStatus,
+    microphoneGranted,
+    microphoneStatus: VisionCamera.microphonePermissionStatus,
+  });
+  return { cameraGranted: true, microphoneGranted };
 }
 
 async function prepareRoundRecordingAudio() {
@@ -43,38 +55,78 @@ async function prepareRoundRecordingAudio() {
     playsInSilentMode: true,
     shouldRouteThroughEarpiece: false,
   });
-  if (Platform.OS === 'ios') {
-    const { prepareRecordingAudio } = await import('whatz-it-video-export');
-    await prepareRecordingAudio();
-  }
 }
 
 export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
-  function RoundCamera({ enabled, onError, onReady }, ref) {
+  function RoundCamera({ enabled, microphoneEnabled, onError, onReady }, ref) {
     const device = useCameraDevice('front');
+    const microphoneRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
     const videoOutput = useVideoOutput({
-      enableAudio: true,
-      // VisionCamera's persistent iOS recorder writes microphone samples through
-      // a dedicated audio capture session and initializes an AVAssetWriter audio
-      // track up front. This avoids the AVCaptureMovieFileOutput path that has
-      // intermittently produced video-only files for this app.
-      enablePersistentRecorder: Platform.OS === 'ios',
+      // iOS microphone audio is recorded independently by expo-audio.
+      // This avoids VisionCamera's intermittently missing iOS audio track.
+      enableAudio: microphoneEnabled && Platform.OS !== 'ios',
       fileType: 'mp4',
     });
     const recorderRef = useRef<Recorder | null>(null);
     const resultPromiseRef = useRef<Promise<string> | null>(null);
+    const microphoneRef = useRef<{ uri: string; offsetMs: number } | null>(null);
+    const microphonePreparedRef = useRef(false);
+
+    const prepareMicrophone = useCallback(async () => {
+      if (Platform.OS !== 'ios' || !microphoneEnabled) return microphoneEnabled;
+      if (microphonePreparedRef.current) return true;
+      try {
+        const statusBefore = microphoneRecorder.getStatus();
+        logVideoDiagnostic('microphone preparation started', {
+          statusBefore,
+        });
+        if (statusBefore.isRecording) {
+          logVideoDiagnostic('stale microphone recording stopped before preparation', {
+            statusBefore,
+            uri: microphoneRecorder.uri,
+          });
+          await microphoneRecorder.stop();
+        }
+        await prepareRoundRecordingAudio();
+        if (!microphoneRecorder.getStatus().canRecord) {
+          await microphoneRecorder.prepareToRecordAsync();
+        }
+        microphonePreparedRef.current = true;
+        logVideoDiagnostic('microphone preparation completed', {
+          statusAfter: microphoneRecorder.getStatus(),
+          uri: microphoneRecorder.uri,
+        });
+        return true;
+      } catch (error) {
+        warnVideoDiagnostic('microphone preparation failed', error, {
+          status: microphoneRecorder.getStatus(),
+          uri: microphoneRecorder.uri,
+        });
+        return false;
+      }
+    }, [microphoneEnabled, microphoneRecorder]);
 
     useImperativeHandle(
       ref,
       () => ({
         async startRecording(maxDuration) {
-          if (!enabled || !device || recorderRef.current) return false;
+          if (!enabled || !device || recorderRef.current) return null;
+          let recorder: Recorder | null = null;
           try {
-            // Audio players can update the shared iOS audio session while the Ready
-            // screen is playing. Re-apply recording mode immediately before creating
-            // the recorder so microphone capture starts under the correct session.
-            await prepareRoundRecordingAudio();
-            const recorder = await videoOutput.createRecorder({ maxDuration });
+            logVideoDiagnostic('recording start requested', {
+              microphoneEnabled,
+              platform: Platform.OS,
+            });
+            let microphonePrepared = await prepareMicrophone();
+            if (microphonePrepared && Platform.OS !== 'ios') {
+              try {
+                await prepareRoundRecordingAudio();
+              } catch (error) {
+                microphonePrepared = false;
+                console.warn('Microphone setup failed; recording video without audio.', error);
+              }
+            }
+            recorder = await videoOutput.createRecorder({ maxDuration });
             recorderRef.current = recorder;
             let finishRecording!: (filePath: string) => void;
             let failRecording!: (error: Error) => void;
@@ -84,11 +136,62 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
             });
             void resultPromiseRef.current.catch(() => undefined);
             await recorder.startRecording(finishRecording, failRecording);
-            return true;
-          } catch {
+            const videoStartedAt = Date.now();
+            if (Platform.OS === 'ios' && microphonePrepared) {
+              try {
+                microphoneRecorder.record();
+                const microphoneUri = microphoneRecorder.uri;
+                const microphoneStatus = microphoneRecorder.getStatus();
+                if (!microphoneStatus.isRecording || !microphoneUri) {
+                  throw new Error('The prepared microphone recorder did not enter recording state.');
+                }
+                microphoneRef.current = {
+                  uri: microphoneUri,
+                  offsetMs: Math.max(0, Date.now() - videoStartedAt),
+                };
+                logVideoDiagnostic('microphone recording started', {
+                  offsetMs: microphoneRef.current.offsetMs,
+                  status: microphoneStatus,
+                  uri: microphoneUri,
+                });
+              } catch (error) {
+                // A microphone failure must not discard an otherwise valid video.
+                warnVideoDiagnostic('microphone recording failed; continuing with video only', error, {
+                  status: microphoneRecorder.getStatus(),
+                  uri: microphoneRecorder.uri,
+                });
+                if (microphoneRecorder.getStatus().isRecording) {
+                  try {
+                    await microphoneRecorder.stop();
+                  } catch {
+                    // The recorder may already have stopped while cleaning up the failed start.
+                  }
+                }
+                microphoneRef.current = null;
+                microphonePreparedRef.current = false;
+              }
+            }
+            logVideoDiagnostic('video recording started', { videoStartedAt });
+            return videoStartedAt;
+          } catch (error) {
+            warnVideoDiagnostic('video recording failed to start', error);
+            try {
+              if (recorder?.isRecording) await recorder.cancelRecording();
+            } catch {
+              // The recorder may already have stopped while cleaning up a failed start.
+            }
+            if (Platform.OS === 'ios' && microphoneRecorder.getStatus().isRecording) {
+              try {
+                await microphoneRecorder.stop();
+              } catch {
+                // There may be no microphone recorder to stop.
+              }
+            }
             recorderRef.current = null;
             resultPromiseRef.current = null;
-            return false;
+            microphoneRef.current = null;
+            microphonePreparedRef.current = false;
+            return null;
           }
         },
         async stopRecording() {
@@ -96,24 +199,80 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
           const result = resultPromiseRef.current;
           if (!recorder || !result) return null;
           try {
+            logVideoDiagnostic('recording stop requested', {
+              microphoneStatus: microphoneRecorder.getStatus(),
+              microphoneUri: microphoneRef.current?.uri,
+              videoRecorderActive: recorder.isRecording,
+            });
             if (recorder.isRecording) await recorder.stopRecording();
-            return await result;
+            let microphoneUri: string | undefined;
+            if (Platform.OS === 'ios') {
+              const microphoneCapture = microphoneRef.current;
+              try {
+                if (microphoneRecorder.getStatus().isRecording) {
+                  await microphoneRecorder.stop();
+                }
+                microphoneUri = microphoneCapture?.uri;
+              } catch (error) {
+                warnVideoDiagnostic('microphone recording failed to stop cleanly', error, {
+                  status: microphoneRecorder.getStatus(),
+                  uri: microphoneCapture?.uri ?? microphoneRecorder.uri,
+                });
+              }
+            }
+            const videoUri = await result;
+            const { File } = await import('expo-file-system');
+            const microphoneFile = microphoneUri ? new File(microphoneUri) : null;
+            const videoFile = new File(videoUri);
+            logVideoDiagnostic('recording stopped', {
+              microphoneFileExists: microphoneFile?.exists ?? false,
+              microphoneFileSize: microphoneFile?.size ?? 0,
+              microphoneStatus: microphoneRecorder.getStatus(),
+              microphoneUri,
+              videoFileExists: videoFile.exists,
+              videoFileSize: videoFile.size,
+              videoUri,
+            });
+            return {
+              videoUri,
+              microphoneUri,
+              microphoneOffsetMs: microphoneRef.current?.offsetMs ?? 0,
+            };
           } finally {
             recorderRef.current = null;
             resultPromiseRef.current = null;
+            microphoneRef.current = null;
+            microphonePreparedRef.current = false;
           }
         },
         async cancelRecording() {
           const recorder = recorderRef.current;
           try {
             if (recorder) await recorder.cancelRecording();
+          } catch {
+            // Continue so the independently recorded microphone file is also removed.
+          }
+          try {
+            if (Platform.OS === 'ios' && microphoneRecorder.getStatus().isRecording) {
+              await microphoneRecorder.stop();
+              const microphoneUri = microphoneRecorder.uri;
+              if (microphoneUri) {
+                const { File } = await import('expo-file-system');
+                const file = new File(microphoneUri);
+                if (file.exists) file.delete();
+              }
+            }
+          } catch {
+            // There may be no native microphone recorder left to cancel.
           } finally {
             recorderRef.current = null;
             resultPromiseRef.current = null;
+            microphoneRef.current = null;
+            microphonePreparedRef.current = false;
           }
         },
       }),
-      [device, enabled, videoOutput],
+      [device, enabled, microphoneEnabled, microphoneRecorder, prepareMicrophone, videoOutput],
     );
 
     if (!enabled || !device) return null;
@@ -121,9 +280,14 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
       <Camera
         device={device}
         isActive
-        mirrorMode="on"
+        // Toggle the recorded front-camera image from the prior behavior so it
+        // has the expected left/right orientation in playback and exports.
+        mirrorMode="off"
         onError={onError}
-        onStarted={onReady}
+        onStarted={() => {
+          // Prepare the microphone before ReadyScreen starts any countdown audio.
+          void prepareMicrophone().then(() => onReady());
+        }}
         outputs={[videoOutput]}
         pointerEvents="none"
         resizeMode="cover"
