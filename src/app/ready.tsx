@@ -20,7 +20,7 @@ import {
   type RoundSoundId,
 } from '@/video/round-sounds';
 
-const GET_READY_SOUND_MS = 1050;
+const GET_READY_SOUND_MS = 1898;
 const READY_TRANSITION_MS = 450;
 const ROUND_AUDIO_PLAYER_OPTIONS = { keepAudioSessionActive: true } as const;
 

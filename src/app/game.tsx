@@ -26,7 +26,7 @@ import { useTiltControls } from '@/hooks/use-tilt-controls';
 import { colors, radius, spacing, typography } from '@/theme';
 import { getRoundSoundSource, playRoundSound, preloadRoundSounds } from '@/video/round-sounds';
 
-const ROUND_END_SCREEN_MS = 1000;
+const ROUND_END_SCREEN_MS = 2495;
 const ROUND_AUDIO_PLAYER_OPTIONS = { keepAudioSessionActive: true } as const;
 
 export default function GameScreen() {
