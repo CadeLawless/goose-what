@@ -3074,7 +3074,7 @@ export const decks: Deck[] = [
       { id: 'history-199', text: 'Boston Harbor Tea Party' },
       { id: 'history-200', text: 'Signing of the Declaration of Independence' },
     ],
-  }
+  },
   {
     id: 'kidding-around',
     title: 'Kidding Around',
