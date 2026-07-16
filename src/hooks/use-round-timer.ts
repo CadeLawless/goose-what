@@ -63,6 +63,11 @@ export function getRemainingSeconds(endsAt: number | null, now = Date.now()) {
   return Math.max(0, Math.ceil((endsAt - now) / 1000));
 }
 
+export function getRemainingSecondsFromMs(remainingMs: number | null) {
+  if (remainingMs === null) return 0;
+  return Math.max(0, Math.ceil(remainingMs / 1000));
+}
+
 export function getNextSecondBoundaryDelay(
   endsAt: number,
   remainingSeconds: number,

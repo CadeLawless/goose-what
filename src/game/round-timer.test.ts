@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import {
   getNextSecondBoundaryDelay,
   getRemainingSeconds,
+  getRemainingSecondsFromMs,
 } from '@/hooks/use-round-timer';
 
 describe('round timer scheduling', () => {
@@ -18,5 +19,11 @@ describe('round timer scheduling', () => {
 
     assert.equal(remaining, 29);
     assert.equal(getNextSecondBoundaryDelay(30_000, remaining, now), 780);
+  });
+
+  it('preserves the displayed second when the round is paused', () => {
+    assert.equal(getRemainingSecondsFromMs(6_250), 7);
+    assert.equal(getRemainingSecondsFromMs(0), 0);
+    assert.equal(getRemainingSecondsFromMs(null), 0);
   });
 });

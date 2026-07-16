@@ -19,7 +19,7 @@ import { useScreenshotTransition } from '@/components/screenshot-transition-prov
 import { getDeckById } from '@/data/decks';
 import { useRound } from '@/game/round-context';
 import { formatRoundClock } from '@/game/round-duration';
-import { useRoundTimer } from '@/hooks/use-round-timer';
+import { getRemainingSecondsFromMs, useRoundTimer } from '@/hooks/use-round-timer';
 import { useTiltControls } from '@/hooks/use-tilt-controls';
 import { colors, radius, spacing, typography } from '@/theme';
 import { triggerRoundHaptic } from '@/utils/round-haptics';
@@ -82,6 +82,10 @@ export default function GameScreen() {
     onExpire: handleExpire,
     onSecond: handleTimerSecond,
   });
+  const displayedRemainingSeconds =
+    round.status === 'paused'
+      ? getRemainingSecondsFromMs(round.remainingMs)
+      : remainingSeconds;
   const handleAnswer = useCallback(
     (outcome: 'correct' | 'passed') => {
       if (outcome === 'correct') {
@@ -274,7 +278,9 @@ export default function GameScreen() {
             {round.status !== 'finished' && (
               <View style={styles.topRow}>
                 <Text pointerEvents="none" style={styles.timer}>
-                  {formatRoundClock(round.status === 'ready' ? round.durationSeconds : remainingSeconds)}
+                  {formatRoundClock(
+                    round.status === 'ready' ? round.durationSeconds : displayedRemainingSeconds,
+                  )}
                 </Text>
                 <Text style={styles.deckName}>{deck.title}</Text>
               </View>
