@@ -9,6 +9,7 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  Vibration,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -348,12 +349,37 @@ export default function GameScreen() {
 
 async function triggerAnswerHaptic(outcome: 'correct' | 'passed') {
   const startedAt = Date.now();
+  const feedbackPath = Platform.OS === 'ios' ? 'ios-system-vibration' : 'expo-haptics';
   logRoundDiagnostic('answer haptic requested', {
+    feedbackPath,
     outcome,
-    pattern: outcome === 'correct' ? 'success-notification' : 'light-impact',
+    pattern:
+      outcome === 'correct'
+        ? Platform.OS === 'ios'
+          ? 'two-system-vibration-pulses'
+          : 'success-notification'
+        : Platform.OS === 'ios'
+          ? 'one-system-vibration-pulse'
+          : 'light-impact',
+    platform: Platform.OS,
   });
   try {
-    if (outcome === 'correct') {
+    if (Platform.OS === 'ios') {
+      // Expo Haptics uses UIFeedbackGenerator, which iOS intentionally disables
+      // while Camera is active. React Native Vibration uses the separate
+      // AudioServices kSystemSoundID_Vibrate path, which our recording audio
+      // session explicitly permits. iOS system pulses are fixed at ~400ms.
+      Vibration.cancel();
+      if (outcome === 'correct') {
+        Vibration.vibrate([0, 500]);
+      } else {
+        Vibration.vibrate();
+      }
+      logRoundDiagnostic('iOS system vibration dispatched', {
+        note: 'iOS does not provide an API to confirm physical vibration output',
+        outcome,
+      });
+    } else if (outcome === 'correct') {
       // Success notification is a longer, more celebratory pattern.
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } else {
@@ -362,6 +388,7 @@ async function triggerAnswerHaptic(outcome: 'correct' | 'passed') {
     }
     logRoundDiagnostic('answer haptic completed', {
       elapsedMs: Date.now() - startedAt,
+      feedbackPath,
       outcome,
     });
   } catch (error) {
