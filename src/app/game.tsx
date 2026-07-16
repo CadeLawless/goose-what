@@ -35,7 +35,6 @@ export default function GameScreen() {
   const [finishPromptVisible, setFinishPromptVisible] = useState(false);
   const roundStarted = useRef(false);
   const startSoundPlayed = useRef(false);
-  const lastTickSecond = useRef<number | null>(null);
   const finishSoundPlayed = useRef(false);
   const screenRef = useRef<View>(null);
   const resultsTransitionStarted = useRef(false);
@@ -43,6 +42,7 @@ export default function GameScreen() {
   const finalTickPlayer = useAudioPlayer(getRoundSoundSource('final-tick'), ROUND_AUDIO_PLAYER_OPTIONS);
   const correctPlayer = useAudioPlayer(getRoundSoundSource('correct'), ROUND_AUDIO_PLAYER_OPTIONS);
   const passPlayer = useAudioPlayer(getRoundSoundSource('pass'), ROUND_AUDIO_PLAYER_OPTIONS);
+  const flipPlayer = useAudioPlayer(getRoundSoundSource('flip'), ROUND_AUDIO_PLAYER_OPTIONS);
   const roundEndPlayer = useAudioPlayer(getRoundSoundSource('round-end'), ROUND_AUDIO_PLAYER_OPTIONS);
   const router = useRouter();
   const { beginTransition } = useScreenshotTransition();
@@ -61,6 +61,14 @@ export default function GameScreen() {
   const currentCardId = round.cardOrder[round.currentCardIndex];
   const currentCard = deck?.cards.find((card) => card.id === currentCardId);
   const handleExpire = useCallback(() => finishRound(), [finishRound]);
+  const handleTimerSecond = useCallback(
+    (remaining: number) => {
+      if (remaining < 1 || remaining > 10) return;
+      recordSoundCue('final-tick');
+      void playRoundSound(finalTickPlayer, 'final-tick');
+    },
+    [finalTickPlayer, recordSoundCue],
+  );
 
   useEffect(() => {
     stopRecordingRef.current = stopRecording;
@@ -69,6 +77,7 @@ export default function GameScreen() {
     endsAt: round.endsAt,
     active: round.status === 'playing' || round.status === 'feedback',
     onExpire: handleExpire,
+    onSecond: handleTimerSecond,
   });
   const handleAnswer = useCallback(
     (outcome: 'correct' | 'passed') => {
@@ -85,12 +94,17 @@ export default function GameScreen() {
     },
     [answerCard, correctPlayer, passPlayer, recordSoundCue],
   );
+  const handleRearmed = useCallback(() => {
+    recordSoundCue('flip');
+    void playRoundSound(flipPlayer, 'flip');
+    advanceCard();
+  }, [advanceCard, flipPlayer, recordSoundCue]);
   const tiltStatus = useTiltControls({
     enabled:
       round.status === 'ready' || round.status === 'playing' || round.status === 'feedback',
     acceptingInput: round.status === 'playing',
     onAction: handleAnswer,
-    onRearmed: advanceCard,
+    onRearmed: handleRearmed,
   });
   const handleFinishEarly = useCallback(() => {
     setFinishPromptVisible(true);
@@ -101,7 +115,7 @@ export default function GameScreen() {
   }, [finishRound]);
 
   useEffect(() => {
-    void preloadRoundSounds(['round-start', 'final-tick', 'correct', 'pass', 'round-end']);
+    void preloadRoundSounds(['round-start', 'final-tick', 'correct', 'pass', 'flip', 'round-end']);
   }, []);
 
   useEffect(() => {
@@ -124,18 +138,6 @@ export default function GameScreen() {
       startRound();
     }
   }, [round.status, startRound, tiltStatus]);
-
-  useEffect(() => {
-    if (round.status !== 'playing' && round.status !== 'feedback') return;
-    if (remainingSeconds < 1 || remainingSeconds > 10) {
-      lastTickSecond.current = null;
-      return;
-    }
-    if (lastTickSecond.current === remainingSeconds) return;
-    lastTickSecond.current = remainingSeconds;
-    recordSoundCue('final-tick');
-    void playRoundSound(finalTickPlayer, 'final-tick');
-  }, [finalTickPlayer, recordSoundCue, remainingSeconds, round.status]);
 
   useEffect(() => {
     if (round.status !== 'feedback') return;

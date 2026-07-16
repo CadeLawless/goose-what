@@ -12,6 +12,7 @@ export type RoundSoundId =
   | 'final-tick'
   | 'correct'
   | 'pass'
+  | 'flip'
   | 'round-end';
 
 export type RoundVideoSoundCue = {
@@ -28,6 +29,7 @@ const ROUND_SOUND_SOURCES: Record<RoundSoundId, number> = {
   'final-tick': require('../../assets/sounds/final-tick.wav'),
   correct: require('../../assets/sounds/correct.wav'),
   pass: require('../../assets/sounds/pass.wav'),
+  flip: require('../../assets/sounds/flip.wav'),
   'round-end': require('../../assets/sounds/round-end.wav'),
 };
 

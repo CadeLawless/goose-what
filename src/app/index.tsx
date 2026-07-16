@@ -289,6 +289,7 @@ export default function DeckLibraryScreen() {
                         saveDisabled={!isRoundVideoReadyToSave(video)}
                         onDelete={deleteFromPlayer}
                         onSave={handleSave}
+                        staticThumbnail
                         video={video}
                         style={styles.video}
                       />
