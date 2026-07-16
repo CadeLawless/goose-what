@@ -46,7 +46,7 @@ export const DEFAULT_TILT_CONFIG: TiltDetectorConfig = {
   smoothingFactor: 0.35,
   triggerAngle: 0.48,
   confirmationSamples: 2,
-  neutralAngle: 0.24,
+  neutralAngle: 0.3,
   rearmSamples: 2,
   baselineAdjustmentFactor: 0.015,
 };

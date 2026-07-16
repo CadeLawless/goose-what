@@ -230,7 +230,7 @@ describe('tilt detector', () => {
     assert.equal(result.state.armed, true);
   });
 
-  it('accepts a slightly wider return-to-center range by default', () => {
+  it('accepts a relaxed return-to-center range by default', () => {
     const quickConfig = {
       ...DEFAULT_TILT_CONFIG,
       calibrationSamples: 2,
@@ -244,9 +244,11 @@ describe('tilt detector', () => {
     result = updateTiltDetector(result.state, 0.6, quickConfig);
     assert.equal(result.action, 'correct');
 
-    result = updateTiltDetector(result.state, 0.23, quickConfig);
+    result = updateTiltDetector(result.state, 0.31, quickConfig);
     assert.equal(result.rearmed, false);
-    result = updateTiltDetector(result.state, 0.23, quickConfig);
+    result = updateTiltDetector(result.state, 0.29, quickConfig);
+    assert.equal(result.rearmed, false);
+    result = updateTiltDetector(result.state, 0.29, quickConfig);
     assert.equal(result.rearmed, true);
   });
 
