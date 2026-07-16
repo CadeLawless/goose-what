@@ -28,8 +28,8 @@ export type RoundAction =
   | { type: 'CONFIGURE'; deckId: string; durationSeconds: number; cardOrder: string[] }
   | { type: 'START'; now: number }
   | { type: 'ANSWER'; outcome: CardOutcome; now: number }
-  | { type: 'ADVANCE' }
+  | { type: 'ADVANCE'; replenishedCardOrder?: string[] }
   | { type: 'PAUSE'; now: number }
-  | { type: 'RESUME'; now: number }
+  | { type: 'RESUME'; now: number; replenishedCardOrder?: string[] }
   | { type: 'FINISH'; now: number }
   | { type: 'RESET' };

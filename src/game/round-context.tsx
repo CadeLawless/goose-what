@@ -12,11 +12,16 @@ import {
 import { Platform } from 'react-native';
 
 import { getDeckById } from '@/data/decks';
+import { getDailyCardPool } from '@/game/daily-card-memory';
 import { initialRoundState, roundReducer } from '@/game/game-reducer';
 import type { CardOutcome, RoundState } from '@/game/game-types';
 import { clampRoundDuration } from '@/game/round-duration';
 import { shuffle } from '@/game/shuffle';
-import { getSessionCardPool } from '@/game/session-card-memory';
+import {
+  loadDailySeenCardIds,
+  rememberDailyCard,
+  resetDailySeenCardIds,
+} from '@/storage/daily-card-memory';
 import {
   requestRoundCameraPermissions,
   RoundCamera,
@@ -45,7 +50,7 @@ const CAMERA_CAPTURE_STOP_TIMEOUT_MS = 4_000;
 
 type RoundContextValue = {
   round: RoundState;
-  configureRound: (deckId: string, durationSeconds: number) => boolean;
+  configureRound: (deckId: string, durationSeconds: number) => Promise<boolean>;
   startRound: () => void;
   answerCard: (outcome: CardOutcome) => void;
   advanceCard: () => void;
@@ -82,7 +87,6 @@ export function RoundProvider({ children }: PropsWithChildren) {
   const [microphoneEnabled, setMicrophoneEnabled] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [currentVideo, setCurrentVideo] = useState<RoundVideo | null>(null);
-  const seenCardsByDeck = useRef(new Map<string, Set<string>>());
   const cameraRef = useRef<RoundCameraRef>(null);
   const cameraReady = useRef(false);
   const cameraReadyResolver = useRef<((ready: boolean) => void) | null>(null);
@@ -96,12 +100,10 @@ export function RoundProvider({ children }: PropsWithChildren) {
   const recordingSoundCues = useRef<RoundVideoSoundCue[]>([]);
   const recordingSegments = useRef<CapturedRoundSegment[]>([]);
 
-  const rememberCard = (deckId: string | null, cardId: string | undefined) => {
+  const rememberCard = useCallback((deckId: string | null, cardId: string | undefined) => {
     if (!deckId || !cardId) return;
-    const seenCards = seenCardsByDeck.current.get(deckId) ?? new Set<string>();
-    seenCards.add(cardId);
-    seenCardsByDeck.current.set(deckId, seenCards);
-  };
+    rememberDailyCard(deckId, cardId);
+  }, []);
 
   const recordOverlayEvent = useCallback((event: Omit<RoundVideoEvent, 'atMs'>) => {
     if (recordingStartedAt.current === null || !recordingActive.current) return;
@@ -512,16 +514,16 @@ export function RoundProvider({ children }: PropsWithChildren) {
       pauseRecording,
       resumeRecording,
       cancelRecording,
-      configureRound: (deckId, durationSeconds) => {
+      configureRound: async (deckId, durationSeconds) => {
         const deck = getDeckById(deckId);
         if (!deck) return false;
-        const seenCards = seenCardsByDeck.current.get(deckId) ?? new Set<string>();
-        const pool = getSessionCardPool(
+        const seenCards = await loadDailySeenCardIds(deckId);
+        const pool = getDailyCardPool(
           deck.cards.map((card) => card.id),
           seenCards,
         );
-        if (pool.resetMemory) seenCards.clear();
-        seenCardsByDeck.current.set(deckId, seenCards);
+        if (pool.cardIds.length === 0) return false;
+        if (pool.resetMemory) await resetDailySeenCardIds(deckId);
         recordingCancelled.current = false;
         recordingEvents.current = [];
         recordingSoundCues.current = [];
@@ -563,7 +565,14 @@ export function RoundProvider({ children }: PropsWithChildren) {
       },
       advanceCard: () => {
         if (round.status === 'feedback') {
-          const nextCardId = round.cardOrder[round.currentCardIndex + 1];
+          let nextCardId = round.cardOrder[round.currentCardIndex + 1];
+          const replenishedCardOrder = nextCardId
+            ? undefined
+            : replenishDeck(round.deckId);
+          if (replenishedCardOrder?.length) {
+            void resetDailySeenCardIds(round.deckId!);
+            nextCardId = replenishedCardOrder[0];
+          }
           rememberCard(round.deckId, nextCardId);
           const deck = getDeckById(round.deckId ?? undefined);
           const card = deck?.cards.find((candidate) => candidate.id === nextCardId);
@@ -574,6 +583,8 @@ export function RoundProvider({ children }: PropsWithChildren) {
               timerEndsAtMs: getRecordingTimerEndsAtMs(round.endsAt),
             });
           }
+          dispatch({ type: 'ADVANCE', replenishedCardOrder });
+          return;
         }
         dispatch({ type: 'ADVANCE' });
       },
@@ -585,10 +596,19 @@ export function RoundProvider({ children }: PropsWithChildren) {
         dispatch({ type: 'PAUSE', now: Date.now() });
       },
       resumeRound: () => {
+        let replenishedCardOrder: string[] | undefined;
         if (round.status === 'paused' && round.pausedStatus === 'feedback') {
-          rememberCard(round.deckId, round.cardOrder[round.currentCardIndex + 1]);
+          let nextCardId = round.cardOrder[round.currentCardIndex + 1];
+          replenishedCardOrder = nextCardId
+            ? undefined
+            : replenishDeck(round.deckId);
+          if (replenishedCardOrder?.length) {
+            void resetDailySeenCardIds(round.deckId!);
+            nextCardId = replenishedCardOrder[0];
+          }
+          rememberCard(round.deckId, nextCardId);
         }
-        dispatch({ type: 'RESUME', now: Date.now() });
+        dispatch({ type: 'RESUME', now: Date.now(), replenishedCardOrder });
       },
       resetRound: () => {
         setIsRecording(false);
@@ -606,6 +626,7 @@ export function RoundProvider({ children }: PropsWithChildren) {
       pauseRecording,
       recordOverlayEvent,
       recordSoundCue,
+      rememberCard,
       resumeRecording,
       retryCurrentVideoExport,
       round,
@@ -664,4 +685,9 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
   return Promise.race([promise, timeoutPromise]).finally(() => {
     if (timeout) clearTimeout(timeout);
   });
+}
+
+function replenishDeck(deckId: string | null) {
+  const deck = getDeckById(deckId ?? undefined);
+  return deck ? shuffle(deck.cards.map((card) => card.id)) : undefined;
 }

@@ -67,10 +67,13 @@ export default function ResultsScreen() {
     );
   }
 
-  const handleReplay = () => {
+  const handleReplay = async () => {
     if (isStarting) return;
-    configureRound(deck.id, round.durationSeconds);
     setIsStarting(true);
+    if (!(await configureRound(deck.id, round.durationSeconds))) {
+      setIsStarting(false);
+      return;
+    }
     router.replace('/ready' as Href);
   };
 
@@ -134,7 +137,7 @@ export default function ResultsScreen() {
       <FlatList
         data={round.results}
         style={styles.list}
-        keyExtractor={(item) => item.cardId}
+        keyExtractor={(item, index) => `${item.cardId}-${index}`}
         contentContainerStyle={styles.content}
         ListHeaderComponent={
           <View>

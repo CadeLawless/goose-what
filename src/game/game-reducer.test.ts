@@ -50,7 +50,7 @@ describe('roundReducer', () => {
     assert.equal(advanced.currentCardIndex, 1);
   });
 
-  it('finishes after answering the final card', () => {
+  it('continues with a replenished deck after answering the final card', () => {
     const playing = {
       ...initialRoundState,
       status: 'playing' as const,
@@ -58,10 +58,15 @@ describe('roundReducer', () => {
       cardOrder: ['only-card'],
     };
     const answered = roundReducer(playing, { type: 'ANSWER', outcome: 'passed', now: 3_000 });
-    const finished = roundReducer(answered, { type: 'ADVANCE' });
+    const continued = roundReducer(answered, {
+      type: 'ADVANCE',
+      replenishedCardOrder: ['new-one', 'new-two'],
+    });
 
-    assert.equal(finished.status, 'finished');
-    assert.equal(finished.results[0].outcome, 'passed');
+    assert.equal(continued.status, 'playing');
+    assert.equal(continued.currentCardIndex, 1);
+    assert.deepEqual(continued.cardOrder, ['only-card', 'new-one', 'new-two']);
+    assert.equal(continued.results[0].outcome, 'passed');
   });
 
   it('ignores repeated finish actions', () => {
@@ -132,6 +137,46 @@ describe('roundReducer', () => {
     assert.equal(resumed.status, 'playing');
     assert.equal(resumed.currentCardIndex, 1);
     assert.equal(resumed.latestOutcome, null);
+  });
+
+  it('continues with a replenished deck when final-card feedback was backgrounded', () => {
+    const paused = {
+      ...initialRoundState,
+      status: 'paused' as const,
+      pausedStatus: 'feedback' as const,
+      deckId: 'animals',
+      cardOrder: ['one'],
+      currentCardIndex: 0,
+      remainingMs: 7_000,
+      latestOutcome: 'correct' as const,
+    };
+    const resumed = roundReducer(paused, {
+      type: 'RESUME',
+      now: 20_000,
+      replenishedCardOrder: ['two', 'one'],
+    });
+
+    assert.equal(resumed.status, 'playing');
+    assert.equal(resumed.currentCardIndex, 1);
+    assert.deepEqual(resumed.cardOrder, ['one', 'two', 'one']);
+    assert.equal(resumed.endsAt, 27_000);
+  });
+
+  it('records an unanswered repeated card when time expires after a reshuffle', () => {
+    const playing = {
+      ...initialRoundState,
+      status: 'playing' as const,
+      deckId: 'animals',
+      cardOrder: ['one', 'one'],
+      currentCardIndex: 1,
+      results: [{ cardId: 'one', outcome: 'correct' as const, answeredAt: 1_000 }],
+    };
+    const finished = roundReducer(playing, { type: 'FINISH', now: 2_000 });
+
+    assert.deepEqual(finished.results, [
+      { cardId: 'one', outcome: 'correct', answeredAt: 1_000 },
+      { cardId: 'one', outcome: 'neutral', answeredAt: 2_000 },
+    ]);
   });
 });
 

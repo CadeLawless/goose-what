@@ -50,7 +50,16 @@ export function roundReducer(state: RoundState, action: RoundAction): RoundState
       if (state.status !== 'feedback') return state;
       const nextIndex = state.currentCardIndex + 1;
       if (nextIndex >= state.cardOrder.length) {
-        return { ...state, status: 'finished', latestOutcome: null };
+        if (!action.replenishedCardOrder?.length) {
+          return { ...state, status: 'finished', latestOutcome: null };
+        }
+        return {
+          ...state,
+          status: 'playing',
+          cardOrder: [...state.cardOrder, ...action.replenishedCardOrder],
+          currentCardIndex: nextIndex,
+          latestOutcome: null,
+        };
       }
       return {
         ...state,
@@ -84,9 +93,21 @@ export function roundReducer(state: RoundState, action: RoundAction): RoundState
       if (state.pausedStatus === 'feedback') {
         const nextIndex = state.currentCardIndex + 1;
         if (nextIndex >= state.cardOrder.length) {
+          if (!action.replenishedCardOrder?.length) {
+            return {
+              ...state,
+              status: 'finished',
+              pausedStatus: null,
+              remainingMs: null,
+              latestOutcome: null,
+            };
+          }
           return {
             ...state,
-            status: 'finished',
+            status: 'playing',
+            cardOrder: [...state.cardOrder, ...action.replenishedCardOrder],
+            currentCardIndex: nextIndex,
+            endsAt: action.now + remainingMs,
             pausedStatus: null,
             remainingMs: null,
             latestOutcome: null,
@@ -115,8 +136,7 @@ export function roundReducer(state: RoundState, action: RoundAction): RoundState
       const cardId = state.cardOrder[state.currentCardIndex];
       const shouldRecordNeutral =
         (state.status === 'ready' || state.status === 'playing') &&
-        cardId !== undefined &&
-        !state.results.some((result) => result.cardId === cardId);
+        cardId !== undefined;
       return {
         ...state,
         status: 'finished',

@@ -79,13 +79,14 @@ export default function DeckDetailsScreen() {
       return;
     }
 
+    setIsStarting(true);
     const safeDuration = clampRoundDuration(duration);
 
-    if (!configureRound(deck.id, safeDuration)) {
+    if (!(await configureRound(deck.id, safeDuration))) {
+      setIsStarting(false);
       return;
     }
 
-    setIsStarting(true);
     saveRoundDuration(safeDuration).catch(() => undefined);
 
     try {
