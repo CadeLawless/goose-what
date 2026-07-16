@@ -19,6 +19,7 @@ import { useScreenshotTransition } from '@/components/screenshot-transition-prov
 import { getDeckById } from '@/data/decks';
 import { useRound } from '@/game/round-context';
 import { formatRoundClock } from '@/game/round-duration';
+import { useOrientationLayoutWaiter } from '@/hooks/use-orientation-layout-waiter';
 import { useRoundTimer } from '@/hooks/use-round-timer';
 import { useTiltControls } from '@/hooks/use-tilt-controls';
 import { colors, radius, spacing, typography } from '@/theme';
@@ -41,6 +42,7 @@ export default function GameScreen() {
   const recordingPausedForBackground = useRef(false);
   const [foregroundResumeGeneration, setForegroundResumeGeneration] = useState(0);
   const screenRef = useRef<View>(null);
+  const { onLayout: onScreenLayout, waitForLayout } = useOrientationLayoutWaiter();
   const resultsTransitionStarted = useRef(false);
   const { isReady: soundsReady, play: playSound } = useRoundSounds();
   const router = useRouter();
@@ -181,6 +183,7 @@ export default function GameScreen() {
         screenRef,
         setScreenOrientation: (orientation) => navigation.setOptions({ orientation }),
         target: 'portrait',
+        waitForLayout,
       });
       if (!active) return;
       try {
@@ -206,7 +209,7 @@ export default function GameScreen() {
     return () => {
       active = false;
     };
-  }, [beginTransition, navigation, round.status, router]);
+  }, [beginTransition, navigation, round.status, router, waitForLayout]);
 
   useEffect(() => {
     let previousState = AppState.currentState;
@@ -269,7 +272,12 @@ export default function GameScreen() {
   const cardFontSize = getCardFontSize(currentCard.text, width, height);
 
   return (
-    <View ref={screenRef} collapsable={false} style={styles.captureRoot}>
+    <View
+      ref={screenRef}
+      collapsable={false}
+      onLayout={onScreenLayout}
+      style={styles.captureRoot}
+    >
       <LandscapeViewport>
         <SafeAreaView edges={[]} style={[styles.safeArea, { backgroundColor: outerColor }]}>
           <StatusBar hidden animated={false} />

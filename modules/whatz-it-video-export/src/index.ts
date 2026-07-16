@@ -80,7 +80,7 @@ export function supportsSilentSwitchMonitoring() {
 }
 
 export function supportsOrientationScreenshotShield() {
-  return getIosVideoExportVersion() >= 16 && !!nativeModule.beginOrientationScreenshotShield;
+  return getIosVideoExportVersion() >= 17 && !!nativeModule.beginOrientationScreenshotShield;
 }
 
 export function beginOrientationScreenshotShield(snapshotUri: string | null) {

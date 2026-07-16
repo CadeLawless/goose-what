@@ -11,6 +11,7 @@ import { useScreenshotTransition } from '@/components/screenshot-transition-prov
 import { getDeckById } from '@/data/decks';
 import { type RecordingPreparation, useRound } from '@/game/round-context';
 import { useForeheadPosition } from '@/hooks/use-forehead-position';
+import { useOrientationLayoutWaiter } from '@/hooks/use-orientation-layout-waiter';
 import { useRoundTimer } from '@/hooks/use-round-timer';
 import { colors, radius, spacing } from '@/theme';
 import { changeOrientationWithScreenshotShield } from '@/utils/orientation-screenshot-shield';
@@ -58,6 +59,7 @@ export default function ReadyScreen() {
   const pausedIntroRemaining = useRef<number | null>(null);
   const pausedCountdownRemaining = useRef<number | null>(null);
   const screenRef = useRef<View>(null);
+  const { onLayout: onScreenLayout, waitForLayout } = useOrientationLayoutWaiter();
   const { beginTransition, revealTransition } = useScreenshotTransition();
   const {
     isReady: soundsReady,
@@ -247,6 +249,7 @@ export default function ReadyScreen() {
         screenRef,
         setScreenOrientation: (orientation) => navigation.setOptions({ orientation }),
         target: 'landscape',
+        waitForLayout,
       });
       if (!active) return;
       logRoundDiagnostic('ready screen native landscape orientation settled');
@@ -256,7 +259,7 @@ export default function ReadyScreen() {
     return () => {
       active = false;
     };
-  }, [navigation, revealTransition, transitionReady]);
+  }, [navigation, revealTransition, transitionReady, waitForLayout]);
 
   useEffect(() => {
     if (
@@ -379,6 +382,7 @@ export default function ReadyScreen() {
       screenRef,
       setScreenOrientation: (orientation) => navigation.setOptions({ orientation }),
       target: 'portrait',
+      waitForLayout,
     });
     try {
       const uri = await captureRef(screenRef, {
@@ -399,7 +403,12 @@ export default function ReadyScreen() {
   };
 
   return (
-    <View ref={screenRef} collapsable={false} style={styles.captureRoot}>
+    <View
+      ref={screenRef}
+      collapsable={false}
+      onLayout={onScreenLayout}
+      style={styles.captureRoot}
+    >
       <LandscapeViewport>
         <SafeAreaView edges={[]} style={styles.safeArea}>
           <StatusBar hidden animated={false} />

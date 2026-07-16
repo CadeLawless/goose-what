@@ -1,12 +1,7 @@
 import * as ScreenOrientation from 'expo-screen-orientation';
 
-const ORIENTATION_SETTLE_MS = 140;
 const ORIENTATION_CHECK_MS = 50;
 const ORIENTATION_CHECK_ATTEMPTS = 20;
-
-function waitForLayout() {
-  return new Promise<void>((resolve) => setTimeout(resolve, ORIENTATION_SETTLE_MS));
-}
 
 export async function lockLandscapeOrientation() {
   const applied = await ScreenOrientation.lockAsync(
@@ -22,7 +17,6 @@ export async function lockLandscapeOrientation() {
       () => ScreenOrientation.Orientation.UNKNOWN,
     );
     if (orientation === ScreenOrientation.Orientation.LANDSCAPE_RIGHT) {
-      await waitForLayout();
       return true;
     }
     await new Promise<void>((resolve) => setTimeout(resolve, ORIENTATION_CHECK_MS));
@@ -45,7 +39,6 @@ export async function lockPortraitOrientation() {
       () => ScreenOrientation.Orientation.UNKNOWN,
     );
     if (orientation === ScreenOrientation.Orientation.PORTRAIT_UP) {
-      await waitForLayout();
       return true;
     }
     await new Promise<void>((resolve) => setTimeout(resolve, ORIENTATION_CHECK_MS));

@@ -76,6 +76,72 @@ private enum VideoExportError: Error, LocalizedError {
   }
 }
 
+private final class OrientationShieldViewController: UIViewController {
+  private let imageView: UIImageView
+  private let sourceSize: CGSize
+  var transitionDidComplete: (() -> Void)?
+
+  init(image: UIImage, sourceSize: CGSize) {
+    self.imageView = UIImageView(image: image)
+    self.sourceSize = sourceSize
+    super.init(nibName: nil, bundle: nil)
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  override func loadView() {
+    let rootView = UIView(frame: CGRect(origin: .zero, size: self.sourceSize))
+    rootView.backgroundColor = .black
+    rootView.clipsToBounds = false
+    rootView.isUserInteractionEnabled = true
+
+    self.imageView.bounds = CGRect(origin: .zero, size: self.sourceSize)
+    self.imageView.center = CGPoint(x: rootView.bounds.midX, y: rootView.bounds.midY)
+    self.imageView.contentMode = .scaleToFill
+    self.imageView.clipsToBounds = false
+    rootView.addSubview(self.imageView)
+    self.view = rootView
+  }
+
+  override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
+    .allButUpsideDown
+  }
+
+  override var shouldAutorotate: Bool {
+    true
+  }
+
+  override func viewDidLayoutSubviews() {
+    super.viewDidLayoutSubviews()
+    guard self.imageView.transform == .identity else { return }
+    self.imageView.bounds = CGRect(origin: .zero, size: self.sourceSize)
+    self.imageView.center = CGPoint(x: self.view.bounds.midX, y: self.view.bounds.midY)
+  }
+
+  override func viewWillTransition(
+    to size: CGSize,
+    with coordinator: UIViewControllerTransitionCoordinator
+  ) {
+    super.viewWillTransition(to: size, with: coordinator)
+    let targetBounds = CGRect(origin: .zero, size: size)
+    coordinator.animate(alongsideTransition: { [weak self] context in
+      guard let self else { return }
+      self.imageView.bounds = CGRect(origin: .zero, size: self.sourceSize)
+      self.imageView.center = CGPoint(x: targetBounds.midX, y: targetBounds.midY)
+      self.imageView.transform = context.targetTransform.inverted()
+    }) { [weak self] context in
+      guard let self else { return }
+      self.imageView.bounds = CGRect(origin: .zero, size: self.sourceSize)
+      self.imageView.center = CGPoint(x: self.view.bounds.midX, y: self.view.bounds.midY)
+      self.imageView.transform = context.targetTransform.inverted()
+      self.transitionDidComplete?()
+    }
+  }
+}
+
 public final class WhatzItVideoExportModule: Module {
   private var microphoneEngine: AVAudioEngine?
   private var microphoneRecorder: AVAudioRecorder?
@@ -84,9 +150,8 @@ public final class WhatzItVideoExportModule: Module {
   private var systemSoundPools = [String: SystemSoundPool]()
   private let silentSwitchLock = NSLock()
   private var silentSwitchProbeId: SystemSoundID?
-  private var orientationShieldOverlay: UIView?
-  private var orientationShieldImageView: UIImageView?
-  private var orientationShieldSourceSize: CGSize = .zero
+  private var orientationShieldWindow: UIWindow?
+  private var orientationShieldController: OrientationShieldViewController?
   private var orientationShieldGeneration = UUID()
   private var orientationShieldReady = false
   private var pendingOrientationShieldFinish: Promise?
@@ -106,7 +171,7 @@ public final class WhatzItVideoExportModule: Module {
     Name("WhatzItVideoExport")
 
     Constant("overlayExportVersion") {
-      16
+      17
     }
 
     AsyncFunction("beginOrientationScreenshotShield") { (snapshotUrl: URL?) -> Bool in
@@ -282,97 +347,56 @@ public final class WhatzItVideoExportModule: Module {
   }
 
   private func beginOrientationScreenshotShield(snapshotUrl: URL?) -> Bool {
-    guard let window = Self.activeWindow() else { return false }
+    guard let sourceWindow = Self.activeWindow(),
+      let windowScene = sourceWindow.windowScene else { return false }
     self.removeOrientationScreenshotShield(pendingResult: false)
 
     let image: UIImage?
     if let snapshotUrl {
-      image = UIImage(contentsOfFile: snapshotUrl.path)
+      image = (try? Data(contentsOf: snapshotUrl)).flatMap { UIImage(data: $0) }
     } else {
-      let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
+      let renderer = UIGraphicsImageRenderer(bounds: sourceWindow.bounds)
       image = renderer.image { _ in
-        window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        sourceWindow.drawHierarchy(in: sourceWindow.bounds, afterScreenUpdates: true)
       }
     }
     guard let image else { return false }
 
-    let overlay = UIView(frame: window.bounds)
-    overlay.backgroundColor = .black
-    overlay.clipsToBounds = true
-    overlay.isUserInteractionEnabled = true
-    overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-
-    let imageView = UIImageView(image: image)
-    imageView.bounds = CGRect(origin: .zero, size: overlay.bounds.size)
-    imageView.center = CGPoint(x: overlay.bounds.midX, y: overlay.bounds.midY)
-    imageView.contentMode = .scaleToFill
-    overlay.addSubview(imageView)
-    window.addSubview(overlay)
-
-    self.orientationShieldOverlay = overlay
-    self.orientationShieldImageView = imageView
-    self.orientationShieldSourceSize = overlay.bounds.size
-    self.orientationShieldReady = false
-    self.orientationShieldGeneration = UUID()
-    self.watchForOrientationShieldTransition(
-      generation: self.orientationShieldGeneration,
-      window: window,
-      attemptsRemaining: 60
+    let generation = UUID()
+    let controller = OrientationShieldViewController(
+      image: image,
+      sourceSize: sourceWindow.bounds.size
     )
+    controller.transitionDidComplete = { [weak self] in
+      self?.completeOrientationShieldTransition(generation: generation)
+    }
+
+    let shieldWindow = UIWindow(windowScene: windowScene)
+    shieldWindow.frame = windowScene.coordinateSpace.bounds
+    shieldWindow.backgroundColor = .black
+    shieldWindow.windowLevel = UIWindow.Level.alert + 1
+    shieldWindow.rootViewController = controller
+    shieldWindow.isUserInteractionEnabled = true
+    shieldWindow.layer.masksToBounds = false
+
+    self.orientationShieldWindow = shieldWindow
+    self.orientationShieldController = controller
+    self.orientationShieldReady = false
+    self.orientationShieldGeneration = generation
+    shieldWindow.isHidden = false
+    shieldWindow.layoutIfNeeded()
+    CATransaction.flush()
+
+    // The controller normally reports the scene rotation completion. Keep a
+    // fallback so a no-op or interrupted system transition cannot strand the shield.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.25) { [weak self] in
+      self?.completeOrientationShieldTransition(generation: generation)
+    }
     return true
   }
 
-  private func watchForOrientationShieldTransition(
-    generation: UUID,
-    window: UIWindow,
-    attemptsRemaining: Int
-  ) {
-    guard generation == self.orientationShieldGeneration,
-      self.orientationShieldOverlay != nil else { return }
-    guard attemptsRemaining > 0 else {
-      self.completeOrientationShieldTransition(generation: generation)
-      return
-    }
-
-    let rootController = window.rootViewController
-    let topController = Self.topViewController(from: rootController)
-    if let coordinator = topController?.transitionCoordinator ?? rootController?.transitionCoordinator {
-      let sourceSize = self.orientationShieldSourceSize
-      coordinator.animate(alongsideTransition: { [weak self, weak window] context in
-        guard let self, let window,
-          generation == self.orientationShieldGeneration,
-          let overlay = self.orientationShieldOverlay,
-          let imageView = self.orientationShieldImageView else { return }
-        overlay.frame = window.bounds
-        imageView.bounds = CGRect(origin: .zero, size: sourceSize)
-        imageView.center = CGPoint(x: overlay.bounds.midX, y: overlay.bounds.midY)
-        imageView.transform = context.targetTransform.inverted()
-      }) { [weak self, weak window] context in
-        guard let self, let window,
-          generation == self.orientationShieldGeneration,
-          let overlay = self.orientationShieldOverlay,
-          let imageView = self.orientationShieldImageView else { return }
-        overlay.frame = window.bounds
-        imageView.bounds = CGRect(origin: .zero, size: sourceSize)
-        imageView.center = CGPoint(x: overlay.bounds.midX, y: overlay.bounds.midY)
-        imageView.transform = context.targetTransform.inverted()
-        self.completeOrientationShieldTransition(generation: generation)
-      }
-      return
-    }
-
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) { [weak self, weak window] in
-      guard let self, let window else { return }
-      self.watchForOrientationShieldTransition(
-        generation: generation,
-        window: window,
-        attemptsRemaining: attemptsRemaining - 1
-      )
-    }
-  }
-
   private func finishOrientationScreenshotShield(promise: Promise) {
-    guard self.orientationShieldOverlay != nil else {
+    guard self.orientationShieldWindow != nil else {
       promise.resolve(false)
       return
     }
@@ -400,10 +424,10 @@ public final class WhatzItVideoExportModule: Module {
       self.pendingOrientationShieldFinish?.resolve(pendingResult)
     }
     self.pendingOrientationShieldFinish = nil
-    self.orientationShieldOverlay?.removeFromSuperview()
-    self.orientationShieldOverlay = nil
-    self.orientationShieldImageView = nil
-    self.orientationShieldSourceSize = .zero
+    self.orientationShieldWindow?.isHidden = true
+    self.orientationShieldWindow?.rootViewController = nil
+    self.orientationShieldWindow = nil
+    self.orientationShieldController = nil
     self.orientationShieldReady = false
   }
 
@@ -413,19 +437,6 @@ public final class WhatzItVideoExportModule: Module {
       .flatMap(\.windows)
       .first(where: { $0.isKeyWindow })
       ?? scenes.flatMap(\.windows).first(where: { !$0.isHidden })
-  }
-
-  private static func topViewController(from root: UIViewController?) -> UIViewController? {
-    if let presented = root?.presentedViewController {
-      return topViewController(from: presented)
-    }
-    if let navigation = root as? UINavigationController {
-      return topViewController(from: navigation.visibleViewController)
-    }
-    if let tab = root as? UITabBarController {
-      return topViewController(from: tab.selectedViewController)
-    }
-    return root
   }
 
   private func prepareSystemSound(_ inputUrl: URL) throws {

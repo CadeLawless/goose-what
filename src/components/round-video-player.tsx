@@ -1,6 +1,7 @@
 import { useEventListener } from 'expo';
 import { type AudioPlayer, setAudioModeAsync, useAudioPlayer } from 'expo-audio';
 import { Image } from 'expo-image';
+import { useNavigation } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import {
   useVideoPlayer,
@@ -25,7 +26,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ConfirmationPrompt } from '@/components/confirmation-prompt';
 import { LandscapeViewport } from '@/components/landscape-viewport';
 import { formatRoundClock } from '@/game/round-duration';
+import { useOrientationLayoutWaiter } from '@/hooks/use-orientation-layout-waiter';
 import { colors, radius, spacing } from '@/theme';
+import { lockPortraitOrientation } from '@/utils/orientation';
+import { changeOrientationWithScreenshotShield } from '@/utils/orientation-screenshot-shield';
 import type { RoundVideo, RoundVideoEvent } from '@/video/round-videos';
 import { logVideoDiagnostic } from '@/video/video-diagnostics';
 
@@ -65,7 +69,9 @@ export function RoundVideoPlayer({
   onDelete,
 }: RoundVideoPlayerProps) {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
   const [expanded, setExpanded] = useState(false);
+  const [modalSupportsLandscape, setModalSupportsLandscape] = useState(false);
   const [saveNotice, setSaveNotice] = useState<VideoSaveNotice | null>(null);
   const [deletePromptVisible, setDeletePromptVisible] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -81,6 +87,11 @@ export function RoundVideoPlayer({
   // recording with its finished export would otherwise restart visible playback.
   const [playbackUri] = useState(() => video.uri);
   const expandedRef = useRef(false);
+  const openingRef = useRef(false);
+  const closingRef = useRef(false);
+  const modalScreenRef = useRef<View>(null);
+  const modalShowResolverRef = useRef<(() => void) | null>(null);
+  const { onLayout: onModalScreenLayout, waitForLayout } = useOrientationLayoutWaiter();
   const previousVideoTime = useRef(0);
   const thumbnailTimeRef = useRef(0);
   const controlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -261,35 +272,57 @@ export function RoundVideoPlayer({
       if (scrubCompletionTimerRef.current !== null) {
         clearTimeout(scrubCompletionTimerRef.current);
       }
+      modalShowResolverRef.current?.();
+      modalShowResolverRef.current = null;
+      if (expandedRef.current) {
+        navigation.setOptions({ orientation: 'portrait' });
+        void lockPortraitOrientation();
+      }
     },
-    [],
+    [navigation],
   );
 
   const openExpanded = async () => {
-    expandedRef.current = true;
-    const startTime = staticThumbnail ? 0 : player.currentTime;
-    if (staticThumbnail) {
-      player.pause();
-      seekVideoPlayer(player, 0);
-      setCurrentTime(0);
-    }
-    previousVideoTime.current = startTime;
-    setExpanded(true);
-    showControls();
-    await setPlaybackAudioMode().catch(() => undefined);
-    if (separateAudioUri) {
-      setPlayerMuted(player, true);
-      await separateAudio.seekTo(startTime).catch(() => undefined);
-      separateAudio.play();
-      if (staticThumbnail) player.replay();
-      else player.play();
-    } else {
-      enablePlayerAudio(player);
-      if (staticThumbnail) player.replay();
+    if (openingRef.current || expandedRef.current) return;
+    openingRef.current = true;
+    try {
+      expandedRef.current = true;
+      const startTime = staticThumbnail ? 0 : player.currentTime;
+      if (staticThumbnail) {
+        player.pause();
+        seekVideoPlayer(player, 0);
+        setCurrentTime(0);
+      }
+      previousVideoTime.current = startTime;
+      const modalShown = waitForModalShow(modalShowResolverRef);
+      setExpanded(true);
+      showControls();
+      await modalShown;
+      setModalSupportsLandscape(true);
+      await waitForReactPaint();
+      await changeOrientationWithScreenshotShield({
+        screenRef: modalScreenRef,
+        setScreenOrientation: (orientation) => navigation.setOptions({ orientation }),
+        target: 'landscape',
+        waitForLayout,
+      });
+      await setPlaybackAudioMode().catch(() => undefined);
+      if (separateAudioUri) {
+        setPlayerMuted(player, true);
+        await separateAudio.seekTo(startTime).catch(() => undefined);
+        separateAudio.play();
+        if (staticThumbnail) player.replay();
+        else player.play();
+      } else {
+        enablePlayerAudio(player);
+        if (staticThumbnail) player.replay();
+      }
+    } finally {
+      openingRef.current = false;
     }
   };
 
-  const closeExpanded = () => {
+  const finishClosingExpandedPlayer = () => {
     clearControlsTimer();
     clearScrubPreviewTimer();
     clearScrubCompletion();
@@ -307,8 +340,27 @@ export function RoundVideoPlayer({
     } else {
       player.play();
     }
+    setModalSupportsLandscape(false);
     setExpanded(false);
     restoreAppAudioMode();
+    closingRef.current = false;
+  };
+
+  const returnExpandedPlayerToPortrait = async () => {
+    await changeOrientationWithScreenshotShield({
+      screenRef: modalScreenRef,
+      setScreenOrientation: (orientation) => navigation.setOptions({ orientation }),
+      target: 'portrait',
+      waitForLayout,
+    });
+    setModalSupportsLandscape(false);
+  };
+
+  const closeExpanded = async () => {
+    if (openingRef.current || closingRef.current || !expandedRef.current) return;
+    closingRef.current = true;
+    await returnExpandedPlayerToPortrait();
+    finishClosingExpandedPlayer();
   };
 
   const requestDelete = () => {
@@ -328,10 +380,13 @@ export function RoundVideoPlayer({
     setIsDeleting(true);
     setDeleteError(null);
     try {
+      closingRef.current = true;
+      await returnExpandedPlayerToPortrait();
       await onDelete(video);
       setDeletePromptVisible(false);
-      closeExpanded();
+      finishClosingExpandedPlayer();
     } catch (error) {
+      closingRef.current = false;
       setDeleteError(error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setIsDeleting(false);
@@ -519,20 +574,32 @@ export function RoundVideoPlayer({
       )}
 
       <Modal
-        animationType="fade"
+        animationType="none"
+        onShow={() => {
+          modalShowResolverRef.current?.();
+          modalShowResolverRef.current = null;
+        }}
         onRequestClose={() =>
           deletePromptVisible
             ? cancelDelete()
             : saveNotice
               ? setSaveNotice(null)
-              : closeExpanded()
+              : void closeExpanded()
         }
         statusBarTranslucent
-        supportedOrientations={['portrait', 'landscape', 'landscape-left', 'landscape-right']}
+        supportedOrientations={
+          modalSupportsLandscape ? ['portrait', 'landscape-right'] : ['portrait']
+        }
         visible={expanded}
       >
-        <LandscapeViewport>
-          <View style={styles.modalRoot}>
+        <View
+          ref={modalScreenRef}
+          collapsable={false}
+          onLayout={onModalScreenLayout}
+          style={styles.modalCaptureRoot}
+        >
+          <LandscapeViewport>
+            <View style={styles.modalRoot}>
             <StatusBar hidden animated={false} />
             <View
               onLayout={(layoutEvent) => {
@@ -616,7 +683,7 @@ export function RoundVideoPlayer({
                   accessibilityLabel="Close video"
                   accessibilityRole="button"
                   hitSlop={8}
-                  onPress={closeExpanded}
+                  onPress={() => void closeExpanded()}
                   style={({ pressed }) => [
                     styles.closeButton,
                     { right: rightChromeInset, top: spacing.md },
@@ -711,11 +778,32 @@ export function RoundVideoPlayer({
               title={saveNotice?.title ?? ''}
               visible={saveNotice !== null}
             />
-          </View>
-        </LandscapeViewport>
+            </View>
+          </LandscapeViewport>
+        </View>
       </Modal>
     </>
   );
+}
+
+function waitForReactPaint() {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
+}
+
+function waitForModalShow(resolverRef: { current: (() => void) | null }) {
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve();
+    };
+    const timeout = setTimeout(finish, 1_000);
+    resolverRef.current = finish;
+  });
 }
 
 function setPlayerMuted(player: VideoPlayer, muted: boolean) {
@@ -916,6 +1004,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.62)',
   },
   thumbnailPlayIcon: { marginLeft: 2, color: '#FFFFFF', fontSize: 17 },
+  modalCaptureRoot: { flex: 1, backgroundColor: '#000000' },
   modalRoot: { flex: 1, backgroundColor: '#000000' },
   expandedFrame: { flex: 1, backgroundColor: '#000000' },
   videoChrome: { position: 'absolute', overflow: 'hidden' },
