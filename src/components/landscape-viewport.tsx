@@ -16,14 +16,6 @@ export function LandscapeViewport({ children, backgroundColor }: LandscapeViewpo
     );
   }
 
-  if (width > height) {
-    return (
-      <View style={[styles.viewport, backgroundColor ? { backgroundColor } : undefined]}>
-        {children}
-      </View>
-    );
-  }
-
   return (
     <View style={[styles.viewport, backgroundColor ? { backgroundColor } : undefined]}>
       <View

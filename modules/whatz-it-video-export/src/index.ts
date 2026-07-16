@@ -49,8 +49,6 @@ type WhatzItVideoExportNativeModule = {
   prepareSystemSound(inputUri: string): Promise<void>;
   playSystemSound(inputUri: string): Promise<void>;
   stopSystemSound(inputUri: string): Promise<void>;
-  beginOrientationScreenshotShield?(snapshotUri: string | null): Promise<boolean>;
-  finishOrientationScreenshotShield?(): Promise<boolean>;
 };
 
 const nativeModule = requireNativeModule<WhatzItVideoExportNativeModule>('WhatzItVideoExport');
@@ -77,18 +75,6 @@ export function supportsSilentAwareSystemSounds() {
 
 export function supportsSilentSwitchMonitoring() {
   return getIosVideoExportVersion() >= 14;
-}
-
-export function supportsOrientationScreenshotShield() {
-  return getIosVideoExportVersion() >= 17 && !!nativeModule.beginOrientationScreenshotShield;
-}
-
-export function beginOrientationScreenshotShield(snapshotUri: string | null) {
-  return nativeModule.beginOrientationScreenshotShield?.(snapshotUri) ?? Promise.resolve(false);
-}
-
-export function finishOrientationScreenshotShield() {
-  return nativeModule.finishOrientationScreenshotShield?.() ?? Promise.resolve(false);
 }
 
 export function exportOverlayVideo(

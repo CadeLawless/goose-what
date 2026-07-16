@@ -59,10 +59,6 @@ class WhatzItVideoExportModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("WhatzItVideoExport")
 
-    AsyncFunction("beginOrientationScreenshotShield") { _: String? -> false }
-
-    AsyncFunction("finishOrientationScreenshotShield") { false }
-
     AsyncFunction("stitchRoundVideoSegments") {
         segments: List<RoundVideoSegment>,
         promise: Promise ->

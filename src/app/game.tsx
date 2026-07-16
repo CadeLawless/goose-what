@@ -1,5 +1,5 @@
 import { useKeepAwake } from 'expo-keep-awake';
-import { type Href, useNavigation, useRouter } from 'expo-router';
+import { type Href, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -19,11 +19,9 @@ import { useScreenshotTransition } from '@/components/screenshot-transition-prov
 import { getDeckById } from '@/data/decks';
 import { useRound } from '@/game/round-context';
 import { formatRoundClock } from '@/game/round-duration';
-import { useOrientationLayoutWaiter } from '@/hooks/use-orientation-layout-waiter';
 import { useRoundTimer } from '@/hooks/use-round-timer';
 import { useTiltControls } from '@/hooks/use-tilt-controls';
 import { colors, radius, spacing, typography } from '@/theme';
-import { changeOrientationWithScreenshotShield } from '@/utils/orientation-screenshot-shield';
 import { triggerRoundHaptic } from '@/utils/round-haptics';
 import { useRoundSounds } from '@/video/round-sound-provider';
 
@@ -34,7 +32,6 @@ const RESULTS_SCREENSHOT_TIMEOUT_MS = 2_000;
 export default function GameScreen() {
   useKeepAwake();
   const { width, height } = useLandscapeDimensions();
-  const navigation = useNavigation();
   const [finishPromptVisible, setFinishPromptVisible] = useState(false);
   const roundStarted = useRef(false);
   const finishSoundPlayed = useRef(false);
@@ -42,7 +39,6 @@ export default function GameScreen() {
   const recordingPausedForBackground = useRef(false);
   const [foregroundResumeGeneration, setForegroundResumeGeneration] = useState(0);
   const screenRef = useRef<View>(null);
-  const { onLayout: onScreenLayout, waitForLayout } = useOrientationLayoutWaiter();
   const resultsTransitionStarted = useRef(false);
   const { isReady: soundsReady, play: playSound } = useRoundSounds();
   const router = useRouter();
@@ -179,13 +175,6 @@ export default function GameScreen() {
       if (!active) return;
       await waitForRoundStop(stopRecordingRef.current());
       if (!active) return;
-      await changeOrientationWithScreenshotShield({
-        screenRef,
-        setScreenOrientation: (orientation) => navigation.setOptions({ orientation }),
-        target: 'portrait',
-        waitForLayout,
-      });
-      if (!active) return;
       try {
         const uri = await withTimeout(
           captureRef(screenRef, {
@@ -209,7 +198,7 @@ export default function GameScreen() {
     return () => {
       active = false;
     };
-  }, [beginTransition, navigation, round.status, router, waitForLayout]);
+  }, [beginTransition, round.status, router]);
 
   useEffect(() => {
     let previousState = AppState.currentState;
@@ -272,12 +261,7 @@ export default function GameScreen() {
   const cardFontSize = getCardFontSize(currentCard.text, width, height);
 
   return (
-    <View
-      ref={screenRef}
-      collapsable={false}
-      onLayout={onScreenLayout}
-      style={styles.captureRoot}
-    >
+    <View ref={screenRef} collapsable={false} style={styles.captureRoot}>
       <LandscapeViewport>
         <SafeAreaView edges={[]} style={[styles.safeArea, { backgroundColor: outerColor }]}>
           <StatusBar hidden animated={false} />
