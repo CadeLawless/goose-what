@@ -30,6 +30,8 @@ import {
   type RoundVideoEvent,
 } from '@/video/round-videos';
 import {
+  resolveRoundAudioCues,
+  ROUND_VIDEO_SOUND_VOLUME,
   type RoundSoundId,
   type RoundVideoSoundCue,
 } from '@/video/round-sounds';
@@ -232,6 +234,7 @@ export function RoundProvider({ children }: PropsWithChildren) {
     }
     const deckId = round.deckId;
     const events = [...recordingEvents.current];
+    const soundCues = [...recordingSoundCues.current];
     stoppingPromise.current = (async () => {
       try {
         const capture = await withTimeout(
@@ -248,9 +251,39 @@ export function RoundProvider({ children }: PropsWithChildren) {
           videoUri: capture.videoUri,
         });
 
-        // The microphone naturally captures the audible round cues. Mixing the cue
-        // files in again makes every game sound play twice.
-        const temporaryAudioUri = capture.microphoneUri;
+        let temporaryAudioUri = capture.microphoneUri;
+        if (Platform.OS === 'ios' && capture.microphoneUri) {
+          try {
+            const { mixRoundAudio, supportsVoiceProcessedMicrophone } =
+              await import('whatz-it-video-export');
+            if (supportsVoiceProcessedMicrophone()) {
+              temporaryAudioUri = await mixRoundAudio(
+                capture.videoUri,
+                capture.microphoneUri,
+                capture.microphoneOffsetMs,
+                await resolveRoundAudioCues(soundCues),
+                ROUND_VIDEO_SOUND_VOLUME,
+              );
+              logVideoDiagnostic('voice track mixed with export-volume round cues', {
+                cueCount: soundCues.length,
+                cueVolume: ROUND_VIDEO_SOUND_VOLUME,
+                microphoneUri: capture.microphoneUri,
+                mixedAudioUri: temporaryAudioUri,
+              });
+            } else {
+              logVideoDiagnostic('round cue mix skipped for legacy native recorder', {
+                cueCount: soundCues.length,
+              });
+            }
+          } catch (error) {
+            // Preserve the voice track if cue resolution or native mixing fails.
+            warnVideoDiagnostic('round cue mix failed; preserving captured audio', error, {
+              cueCount: soundCues.length,
+              microphoneUri: capture.microphoneUri,
+            });
+            temporaryAudioUri = capture.microphoneUri;
+          }
+        }
 
         const video = await storeRoundVideo(capture.videoUri, temporaryAudioUri, deckId, events);
         setCurrentVideo(video);

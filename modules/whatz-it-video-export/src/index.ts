@@ -31,6 +31,7 @@ type WhatzItVideoExportNativeModule = {
     microphoneUri: string,
     microphoneOffsetMs: number,
     cues: RoundAudioCue[],
+    cueVolume: number,
   ): Promise<string>;
   prepareRecordingAudio(): Promise<void>;
   reassertRecordingHaptics(): Promise<boolean>;
@@ -53,6 +54,10 @@ export function supportsFixedIosOverlayExport() {
 
 export function supportsReliableIosAudioExport() {
   return getIosVideoExportVersion() >= 3;
+}
+
+export function supportsVoiceProcessedMicrophone() {
+  return getIosVideoExportVersion() >= 11;
 }
 
 export function exportOverlayVideo(
@@ -78,8 +83,15 @@ export function mixRoundAudio(
   microphoneUri: string,
   microphoneOffsetMs: number,
   cues: RoundAudioCue[],
+  cueVolume: number,
 ) {
-  return nativeModule.mixRoundAudio(videoUri, microphoneUri, microphoneOffsetMs, cues);
+  return nativeModule.mixRoundAudio(
+    videoUri,
+    microphoneUri,
+    microphoneOffsetMs,
+    cues,
+    cueVolume,
+  );
 }
 
 export function prepareRecordingAudio() {

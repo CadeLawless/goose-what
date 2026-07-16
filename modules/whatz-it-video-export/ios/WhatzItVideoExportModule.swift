@@ -70,7 +70,7 @@ private enum VideoExportError: Error, LocalizedError {
 }
 
 public final class WhatzItVideoExportModule: Module {
-  private var microphoneRecorder: AVAudioRecorder?
+  private var microphoneEngine: AVAudioEngine?
   private var microphoneRecordingUrl: URL?
   private let soundIdsLock = NSLock()
   private var activeSoundIds = Set<SystemSoundID>()
@@ -79,7 +79,7 @@ public final class WhatzItVideoExportModule: Module {
     Name("WhatzItVideoExport")
 
     Constant("overlayExportVersion") {
-      10
+      11
     }
 
     AsyncFunction("exportOverlayVideo") {
@@ -115,7 +115,8 @@ public final class WhatzItVideoExportModule: Module {
         videoUrl: URL,
         microphoneUrl: URL,
         microphoneOffsetMs: Double,
-        cues: [RoundAudioCueRecord]
+        cues: [RoundAudioCueRecord],
+        cueVolume: Double
       ) async throws -> String in
       let outputUrl = FileManager.default.temporaryDirectory
         .appendingPathComponent("whatz-it-round-audio-\(UUID().uuidString).m4a")
@@ -125,6 +126,7 @@ public final class WhatzItVideoExportModule: Module {
           microphoneUrl: microphoneUrl,
           microphoneOffsetMs: microphoneOffsetMs,
           cues: cues,
+          cueVolume: cueVolume,
           outputUrl: outputUrl
         )
         return outputUrl.absoluteString
@@ -155,46 +157,101 @@ public final class WhatzItVideoExportModule: Module {
     }
 
     AsyncFunction("startMicrophoneRecording") { () throws -> String in
-      guard self.microphoneRecorder == nil else {
+      guard self.microphoneEngine == nil else {
         throw VideoExportError.microphoneAlreadyRecording
       }
       try Self.configureRecordingAudioSession()
       let outputUrl = FileManager.default.temporaryDirectory
         .appendingPathComponent("whatz-it-microphone-\(UUID().uuidString).m4a")
-      let settings: [String: Any] = [
-        AVFormatIDKey: kAudioFormatMPEG4AAC,
-        AVSampleRateKey: 44_100,
-        AVNumberOfChannelsKey: 1,
-        AVEncoderBitRateKey: 128_000,
-        AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
-      ]
-      let recorder = try AVAudioRecorder(url: outputUrl, settings: settings)
-      guard recorder.prepareToRecord(), recorder.record() else {
-        throw VideoExportError.microphoneStartFailed
+      let engine = AVAudioEngine()
+      let inputNode = engine.inputNode
+      var tapInstalled = false
+      do {
+        try inputNode.setVoiceProcessingEnabled(true)
+        if #available(iOS 17.0, *) {
+          inputNode.voiceProcessingOtherAudioDuckingConfiguration =
+            AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
+              enableAdvancedDucking: ObjCBool(false),
+              duckingLevel: .min
+            )
+        }
+        let inputFormat = inputNode.outputFormat(forBus: 0)
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+          throw VideoExportError.microphoneStartFailed
+        }
+        let settings: [String: Any] = [
+          AVFormatIDKey: kAudioFormatMPEG4AAC,
+          AVSampleRateKey: inputFormat.sampleRate,
+          AVNumberOfChannelsKey: Int(inputFormat.channelCount),
+          AVEncoderBitRateKey: 128_000,
+          AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+        ]
+        let audioFile = try AVAudioFile(
+          forWriting: outputUrl,
+          settings: settings,
+          commonFormat: inputFormat.commonFormat,
+          interleaved: inputFormat.isInterleaved
+        )
+        inputNode.installTap(
+          onBus: 0,
+          bufferSize: 1_024,
+          format: inputFormat
+        ) { buffer, _ in
+          do {
+            try audioFile.write(from: buffer)
+          } catch {
+            NSLog("[RoundAudioNative] Voice-processed microphone write failed error=%@", error.localizedDescription)
+          }
+        }
+        tapInstalled = true
+        engine.prepare()
+        try engine.start()
+        guard engine.isRunning else {
+          throw VideoExportError.microphoneStartFailed
+        }
+      } catch {
+        engine.stop()
+        if tapInstalled {
+          inputNode.removeTap(onBus: 0)
+        }
+        try? FileManager.default.removeItem(at: outputUrl)
+        throw error
       }
-      self.microphoneRecorder = recorder
+      self.microphoneEngine = engine
       self.microphoneRecordingUrl = outputUrl
+      NSLog(
+        "[RoundAudioNative] Voice-processed microphone started sampleRate=%.0f channels=%u uri=%@",
+        inputNode.outputFormat(forBus: 0).sampleRate,
+        inputNode.outputFormat(forBus: 0).channelCount,
+        outputUrl.absoluteString
+      )
       return outputUrl.absoluteString
     }
 
     AsyncFunction("stopMicrophoneRecording") { () throws -> String in
-      guard let recorder = self.microphoneRecorder,
+      guard let engine = self.microphoneEngine,
             let outputUrl = self.microphoneRecordingUrl else {
         throw VideoExportError.microphoneNotRecording
       }
-      recorder.stop()
-      self.microphoneRecorder = nil
+      engine.stop()
+      engine.inputNode.removeTap(onBus: 0)
+      self.microphoneEngine = nil
       self.microphoneRecordingUrl = nil
+      NSLog("[RoundAudioNative] Voice-processed microphone stopped uri=%@", outputUrl.absoluteString)
       return outputUrl.absoluteString
     }
 
     AsyncFunction("cancelMicrophoneRecording") { () in
-      self.microphoneRecorder?.stop()
+      if let engine = self.microphoneEngine {
+        engine.stop()
+        engine.inputNode.removeTap(onBus: 0)
+      }
       if let outputUrl = self.microphoneRecordingUrl {
         try? FileManager.default.removeItem(at: outputUrl)
       }
-      self.microphoneRecorder = nil
+      self.microphoneEngine = nil
       self.microphoneRecordingUrl = nil
+      NSLog("[RoundAudioNative] Voice-processed microphone cancelled")
     }
 
     AsyncFunction("playSystemSound") { (inputUrl: URL) throws in
@@ -265,7 +322,7 @@ public final class WhatzItVideoExportModule: Module {
     let audioSession = AVAudioSession.sharedInstance()
     try audioSession.setCategory(
       .playAndRecord,
-      mode: .videoRecording,
+      mode: .videoChat,
       options: [.defaultToSpeaker]
     )
     try audioSession.setAllowHapticsAndSystemSoundsDuringRecording(true)
@@ -277,6 +334,7 @@ public final class WhatzItVideoExportModule: Module {
     microphoneUrl: URL,
     microphoneOffsetMs: Double,
     cues: [RoundAudioCueRecord],
+    cueVolume: Double,
     outputUrl: URL
   ) async throws {
     let videoAsset = AVURLAsset(url: videoUrl)
@@ -345,7 +403,7 @@ public final class WhatzItVideoExportModule: Module {
     microphoneParameters.setVolume(1, at: .zero)
     let effectParameters = effectTracks.map { track in
       let parameters = AVMutableAudioMixInputParameters(track: track)
-      parameters.setVolume(0.3, at: .zero)
+      parameters.setVolume(Float(max(0, min(1, cueVolume))), at: .zero)
       return parameters
     }
     audioMix.inputParameters = [microphoneParameters] + effectParameters

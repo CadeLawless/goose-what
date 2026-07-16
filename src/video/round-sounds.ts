@@ -49,6 +49,7 @@ for (const [sound, source] of Object.entries(ROUND_SOUND_SOURCES)) {
 
 const soundUriPromises = new Map<RoundSoundId, Promise<string>>();
 const DEFAULT_ROUND_SOUND_VOLUME = 1;
+export const ROUND_VIDEO_SOUND_VOLUME = 0.2;
 const ROUND_SOUND_VOLUMES: Partial<Record<RoundSoundId, number>> = {
   correct: 0.4,
   flip: 0.7,
