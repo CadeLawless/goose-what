@@ -8,6 +8,7 @@ struct VideoOverlayEventRecord: Record {
   @Field var atMs: Double = 0
   @Field var kind: String = "card"
   @Field var text: String = ""
+  @Field var byline: String? = nil
   @Field var timerEndsAtMs: Double? = nil
 }
 
@@ -77,7 +78,7 @@ public final class WhatzItVideoExportModule: Module {
     Name("WhatzItVideoExport")
 
     Constant("overlayExportVersion") {
-      20
+      21
     }
 
     AsyncFunction("exportOverlayVideo") {
@@ -908,6 +909,9 @@ public final class WhatzItVideoExportModule: Module {
     let text = event.text
       .split(whereSeparator: { $0.isWhitespace })
       .joined(separator: " ")
+    let byline = event.byline.map {
+      $0.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+    }.flatMap { $0.isEmpty ? nil : "by \($0)" }
     let horizontalPadding = renderSize.width * 0.0198
     let verticalPadding = renderSize.height * 0.0154
     let maximumTextWidth = max(1, renderSize.width - horizontalPadding * 2)
@@ -919,6 +923,23 @@ public final class WhatzItVideoExportModule: Module {
       fontSize = max(1, fontSize - 1)
       font = UIFont.systemFont(ofSize: fontSize, weight: .black)
       textSize = (text as NSString).size(withAttributes: [.font: font])
+    }
+    let bylineFont: UIFont?
+    let bylineSize: CGSize
+    if let byline {
+      var fontSize = renderSize.height * 0.035
+      var font = UIFont.systemFont(ofSize: fontSize, weight: .semibold)
+      var size = (byline as NSString).size(withAttributes: [.font: font])
+      while size.width > maximumTextWidth && fontSize > 1 {
+        fontSize = max(1, fontSize - 1)
+        font = UIFont.systemFont(ofSize: fontSize, weight: .semibold)
+        size = (byline as NSString).size(withAttributes: [.font: font])
+      }
+      bylineFont = font
+      bylineSize = size
+    } else {
+      bylineFont = nil
+      bylineSize = .zero
     }
     let timerFont: UIFont?
     let timerSize: CGSize
@@ -936,11 +957,19 @@ public final class WhatzItVideoExportModule: Module {
     let minimumWidth = renderSize.width * 0.3
     let width = min(
       renderSize.width,
-      max(minimumWidth, ceil(max(textSize.width, timerSize.width)) + horizontalPadding * 2)
+      max(
+        minimumWidth,
+        ceil(max(textSize.width, max(bylineSize.width, timerSize.width))) + horizontalPadding * 2
+      )
     )
     let minimumHeight = renderSize.height * 0.123
+    let bylineSpacing = byline == nil ? 0 : renderSize.height * 0.0051
     let timerSpacing = timerSegments.isEmpty ? 0 : renderSize.height * 0.0051
-    let contentHeight = font.lineHeight + (timerFont?.lineHeight ?? 0) + timerSpacing
+    let contentHeight = font.lineHeight
+      + (bylineFont?.lineHeight ?? 0)
+      + bylineSpacing
+      + (timerFont?.lineHeight ?? 0)
+      + timerSpacing
     let height = max(minimumHeight, ceil(contentHeight) + verticalPadding * 2)
     let margin = renderSize.height * 0.133
     let frame = CGRect(
@@ -954,10 +983,13 @@ public final class WhatzItVideoExportModule: Module {
       makeOverlayImage(
         event: event,
         text: text,
+        byline: byline,
         timerText: timerText,
         size: imageSize,
         font: font,
+        bylineFont: bylineFont,
         timerFont: timerFont,
+        bylineSpacing: bylineSpacing,
         timerSpacing: timerSpacing,
         horizontalPadding: horizontalPadding
       )
@@ -1052,10 +1084,13 @@ public final class WhatzItVideoExportModule: Module {
   private static func makeOverlayImage(
     event: VideoOverlayEventRecord,
     text: String,
+    byline: String?,
     timerText: String?,
     size: CGSize,
     font: UIFont,
+    bylineFont: UIFont?,
     timerFont: UIFont?,
+    bylineSpacing: CGFloat,
     timerSpacing: CGFloat,
     horizontalPadding: CGFloat
   ) -> CGImage? {
@@ -1088,8 +1123,13 @@ public final class WhatzItVideoExportModule: Module {
         context: nil
       )
       let textHeight = min(size.height, ceil(measuredText.height))
+      let bylineHeight = bylineFont.map { ceil($0.lineHeight) } ?? 0
       let timerHeight = timerFont.map { ceil($0.lineHeight) } ?? 0
-      let contentHeight = textHeight + timerSpacing + timerHeight
+      let contentHeight = textHeight
+        + bylineSpacing
+        + bylineHeight
+        + timerSpacing
+        + timerHeight
       let contentTop = (size.height - contentHeight) / 2
       let textRect = CGRect(
         x: horizontalPadding,
@@ -1102,6 +1142,28 @@ public final class WhatzItVideoExportModule: Module {
         options: [.usesLineFragmentOrigin, .usesFontLeading],
         context: nil
       )
+
+      if let byline, let bylineFont {
+        let bylineText = NSAttributedString(
+          string: byline,
+          attributes: [
+            .font: bylineFont,
+            .foregroundColor: palette.foreground.withAlphaComponent(0.72),
+            .paragraphStyle: paragraph
+          ]
+        )
+        let bylineRect = CGRect(
+          x: horizontalPadding,
+          y: contentTop + textHeight + bylineSpacing,
+          width: availableTextWidth,
+          height: bylineHeight
+        )
+        bylineText.draw(
+          with: bylineRect,
+          options: [.usesLineFragmentOrigin, .usesFontLeading],
+          context: nil
+        )
+      }
 
       if let timerText, let timerFont {
         let timerParagraph = NSMutableParagraphStyle()
@@ -1117,7 +1179,7 @@ public final class WhatzItVideoExportModule: Module {
         )
         let timerRect = CGRect(
           x: horizontalPadding,
-          y: contentTop + textHeight + timerSpacing,
+          y: contentTop + textHeight + bylineSpacing + bylineHeight + timerSpacing,
           width: availableTextWidth,
           height: timerHeight
         )

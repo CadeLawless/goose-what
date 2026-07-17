@@ -115,7 +115,11 @@ export function RoundProvider({ children }: PropsWithChildren) {
     if (recordingStartedAt.current === null || !recordingActive.current) return;
     const atMs = Math.max(0, Date.now() - recordingStartedAt.current);
     const previous = recordingEvents.current.at(-1);
-    if (previous?.kind === event.kind && previous.text === event.text) return;
+    if (
+      previous?.kind === event.kind &&
+      previous.text === event.text &&
+      previous.byline === event.byline
+    ) return;
     recordingEvents.current.push({ ...event, atMs });
   }, []);
 
@@ -375,6 +379,7 @@ export function RoundProvider({ children }: PropsWithChildren) {
       recordOverlayEvent({
         kind: 'card',
         text: card.text,
+        byline: card.byline,
         timerEndsAtMs: getRecordingTimerEndsAtMs(resumedEndsAt),
       });
     }
@@ -602,6 +607,7 @@ export function RoundProvider({ children }: PropsWithChildren) {
           recordOverlayEvent({
             kind: 'card',
             text: card.text,
+            byline: card.byline,
             timerEndsAtMs: getRecordingTimerEndsAtMs(
               Date.now() + round.durationSeconds * 1000,
             ),
@@ -634,6 +640,7 @@ export function RoundProvider({ children }: PropsWithChildren) {
             recordOverlayEvent({
               kind: 'card',
               text: card.text,
+              byline: card.byline,
               timerEndsAtMs: getRecordingTimerEndsAtMs(round.endsAt),
             });
           }

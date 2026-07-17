@@ -207,7 +207,10 @@ export default function ResultsScreen() {
               <View style={[styles.outcomeDot, { backgroundColor: outcomeColor }]}>
                 <Text style={styles.outcomeIcon}>{outcomeIcon}</Text>
               </View>
-              <Text style={styles.resultText}>{card?.text ?? 'Unknown card'}</Text>
+              <View style={styles.resultCopy}>
+                <Text style={styles.resultText}>{card?.text ?? 'Unknown card'}</Text>
+                {card?.byline && <Text style={styles.resultByline}>by {card.byline}</Text>}
+              </View>
               <Text style={styles.outcomeText}>{outcomeLabel}</Text>
             </View>
           );
@@ -288,7 +291,9 @@ const styles = StyleSheet.create({
   },
   outcomeDot: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
   outcomeIcon: { color: colors.ink, fontSize: 17, fontWeight: '900' },
-  resultText: { flex: 1, color: colors.ink, fontSize: 17, fontWeight: '800' },
+  resultCopy: { flex: 1, gap: 2 },
+  resultText: { color: colors.ink, fontSize: 17, fontWeight: '800' },
+  resultByline: { color: colors.muted, fontSize: 13, fontWeight: '600' },
   outcomeText: { color: colors.muted, fontSize: 9, fontWeight: '900', letterSpacing: 1 },
   separator: { height: spacing.sm },
   noCards: { ...typography.body, color: colors.muted, textAlign: 'center', padding: spacing.xl },

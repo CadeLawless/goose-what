@@ -141,7 +141,11 @@ export default function GameScreen() {
   useEffect(() => {
     if (!currentCard) return;
     if (round.status === 'playing') {
-      recordOverlayEvent({ kind: 'card', text: currentCard.text });
+      recordOverlayEvent({
+        kind: 'card',
+        text: currentCard.text,
+        byline: currentCard.byline,
+      });
     } else if (round.status === 'feedback' && round.latestOutcome) {
       recordOverlayEvent({
         kind: round.latestOutcome,
@@ -257,6 +261,7 @@ export default function GameScreen() {
         ? colors.playBorder
         : '#439EFE';
   const cardFontSize = getCardFontSize(currentCard.text, width, height);
+  const bylineFontSize = getBylineFontSize(width, height);
 
   return (
     <View ref={screenRef} collapsable={false} style={styles.captureRoot}>
@@ -280,16 +285,40 @@ export default function GameScreen() {
               </View>
             )}
 
-            <View style={styles.cardArea}>
-              <Text
-                maxFontSizeMultiplier={1.1}
-                style={[
-                  styles.cardText,
-                  { fontSize: cardFontSize, lineHeight: Math.round(cardFontSize * 1.1) },
-                ]}
-              >
-                {currentCard.text}
-              </Text>
+            <View
+              accessible
+              accessibilityLabel={
+                currentCard.byline
+                  ? `${currentCard.text} by ${currentCard.byline}`
+                  : currentCard.text
+              }
+              style={styles.cardArea}
+            >
+              <View style={styles.cardCopy}>
+                <Text
+                  maxFontSizeMultiplier={1.1}
+                  style={[
+                    styles.cardText,
+                    { fontSize: cardFontSize, lineHeight: Math.round(cardFontSize * 1.1) },
+                  ]}
+                >
+                  {currentCard.text}
+                </Text>
+                {currentCard.byline && (
+                  <Text
+                    maxFontSizeMultiplier={1.1}
+                    style={[
+                      styles.cardByline,
+                      {
+                        fontSize: bylineFontSize,
+                        lineHeight: Math.round(bylineFontSize * 1.2),
+                      },
+                    ]}
+                  >
+                    by {currentCard.byline}
+                  </Text>
+                )}
+              </View>
             </View>
 
             {Platform.OS === 'web' && (
@@ -392,6 +421,10 @@ function getCardFontSize(text: string, width: number, height: number) {
   const lengthSize = text.length <= 16 ? 68 : text.length <= 28 ? 56 : text.length <= 44 ? 46 : 38;
   const viewportSize = Math.max(36, Math.min(68, height * 0.18, width * 0.09));
   return Math.round(Math.min(lengthSize, viewportSize));
+}
+
+function getBylineFontSize(width: number, height: number) {
+  return Math.round(Math.max(18, Math.min(28, height * 0.075, width * 0.04)));
 }
 
 async function waitForRoundStop(stopPromise: Promise<unknown>) {
@@ -500,6 +533,11 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
     paddingBottom: 70,
   },
+  cardCopy: {
+    maxWidth: '100%',
+    alignItems: 'center',
+    gap: 12,
+  },
   cardLabel: { color: colors.white, fontSize: 11, fontWeight: '900', letterSpacing: 2, opacity: 0.72 },
   cardText: {
     color: colors.play,
@@ -508,6 +546,15 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     maxWidth: '100%',
     flexShrink: 1,
+  },
+  cardByline: {
+    maxWidth: '100%',
+    flexShrink: 1,
+    color: colors.play,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+    textAlign: 'center',
+    opacity: 0.72,
   },
   controls: {
     position: 'absolute',

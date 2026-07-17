@@ -24,6 +24,7 @@ export type RoundVideoEvent = {
   atMs: number;
   kind: 'countdown' | 'card' | 'correct' | 'passed' | 'times-up';
   text: string;
+  byline?: string;
   timerEndsAtMs?: number;
 };
 

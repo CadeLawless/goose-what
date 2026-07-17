@@ -835,6 +835,7 @@ function PlaybackOverlay({
   if (!event) return null;
   const palette = getEventPalette(event.kind);
   const text = event.text.replace(/\s+/g, ' ').trim();
+  const byline = event.byline?.replace(/\s+/g, ' ').trim();
   const timerText = getOverlayTimerText(event, currentTimeMs);
   return (
     <View pointerEvents="none" style={[styles.overlay, compact && styles.overlayCompact]}>
@@ -859,6 +860,22 @@ function PlaybackOverlay({
         >
           {text}
         </Text>
+        {byline && (
+          <Text
+            adjustsFontSizeToFit
+            allowFontScaling={false}
+            ellipsizeMode="clip"
+            minimumFontScale={0.01}
+            numberOfLines={1}
+            style={[
+              styles.overlayByline,
+              compact && styles.overlayBylineCompact,
+              { color: palette.foreground },
+            ]}
+          >
+            by {byline}
+          </Text>
+        )}
         {timerText && (
           <Text
             allowFontScaling={false}
@@ -952,6 +969,16 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   overlayTextCompact: { fontSize: 10, lineHeight: 11 },
+  overlayByline: {
+    marginTop: 2,
+    flexShrink: 1,
+    fontSize: 14,
+    lineHeight: 17,
+    fontWeight: '600',
+    textAlign: 'center',
+    opacity: 0.72,
+  },
+  overlayBylineCompact: { marginTop: 1, fontSize: 6, lineHeight: 7 },
   overlayTimer: { marginTop: 2, fontSize: 12, lineHeight: 14, fontWeight: '800', textAlign: 'center' },
   overlayTimerCompact: { marginTop: 1, fontSize: 5, lineHeight: 6 },
   closeButton: {

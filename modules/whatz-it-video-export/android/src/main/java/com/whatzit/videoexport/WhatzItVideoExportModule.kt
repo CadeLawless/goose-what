@@ -43,6 +43,7 @@ class VideoOverlayEvent(
   @Field val atMs: Double,
   @Field val kind: String,
   @Field val text: String,
+  @Field val byline: String? = null,
   @Field val timerEndsAtMs: Double? = null
 ) : Record
 
@@ -189,6 +190,10 @@ private class TimedCardOverlay(
     typeface = systemTypeface(900)
     textAlign = Paint.Align.CENTER
   }
+  private val bylinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    typeface = systemTypeface(600)
+    textAlign = Paint.Align.CENTER
+  }
   private val timerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
     typeface = systemTypeface(800)
     textAlign = Paint.Align.CENTER
@@ -208,6 +213,11 @@ private class TimedCardOverlay(
     val canvasWidth = canvas.width.toFloat()
     val canvasHeight = canvas.height.toFloat()
     val text = event.text.trim().replace(Regex("\\s+"), " ")
+    val byline = event.byline
+      ?.trim()
+      ?.replace(Regex("\\s+"), " ")
+      ?.takeIf { it.isNotEmpty() }
+      ?.let { "by $it" }
     val horizontalPadding = canvasWidth * 0.0198f
     val verticalPadding = canvasHeight * 0.0154f
     val maximumTextWidth = max(1f, canvasWidth - horizontalPadding * 2)
@@ -217,15 +227,26 @@ private class TimedCardOverlay(
       answerPaint.textSize = max(0.1f, answerPaint.textSize * maximumTextWidth / answerWidth)
       answerWidth = answerPaint.measureText(text)
     }
+    bylinePaint.textSize = canvasHeight * 0.035f
+    var bylineWidth = byline?.let { bylinePaint.measureText(it) } ?: 0f
+    if (bylineWidth > maximumTextWidth) {
+      bylinePaint.textSize = max(0.1f, bylinePaint.textSize * maximumTextWidth / bylineWidth)
+      bylineWidth = byline?.let { bylinePaint.measureText(it) } ?: 0f
+    }
     val timerText = timerTextFor(event, timeMs)
     timerPaint.textSize = canvasHeight * 0.0308f
     val timerWidth = timerText?.let { timerPaint.measureText(it) } ?: 0f
     val minimumWidth = canvasWidth * 0.3f
-    val width = min(canvasWidth, max(minimumWidth, max(answerWidth, timerWidth) + horizontalPadding * 2))
+    val width = min(
+      canvasWidth,
+      max(minimumWidth, max(answerWidth, max(bylineWidth, timerWidth)) + horizontalPadding * 2)
+    )
     val answerHeight = lineHeight(answerPaint)
+    val bylineHeight = if (byline == null) 0f else lineHeight(bylinePaint)
     val timerHeight = if (timerText == null) 0f else lineHeight(timerPaint)
+    val bylineSpacing = if (byline == null) 0f else canvasHeight * 0.0051f
     val timerSpacing = if (timerText == null) 0f else canvasHeight * 0.0051f
-    val contentHeight = answerHeight + timerSpacing + timerHeight
+    val contentHeight = answerHeight + bylineSpacing + bylineHeight + timerSpacing + timerHeight
     val height = max(canvasHeight * 0.123f, contentHeight + verticalPadding * 2)
     val margin = canvasHeight * 0.133f
     val left = (canvasWidth - width) / 2f
@@ -241,10 +262,17 @@ private class TimedCardOverlay(
     val answerMetrics = answerPaint.fontMetrics
     val answerBaseline = contentTop - answerMetrics.ascent
     canvas.drawText(text, bounds.centerX(), answerBaseline, answerPaint)
+    if (byline != null) {
+      bylinePaint.color = colors.second
+      bylinePaint.alpha = 184
+      val bylineMetrics = bylinePaint.fontMetrics
+      val bylineBaseline = contentTop + answerHeight + bylineSpacing - bylineMetrics.ascent
+      canvas.drawText(byline, bounds.centerX(), bylineBaseline, bylinePaint)
+    }
     if (timerText != null) {
       timerPaint.color = colors.second
       val timerMetrics = timerPaint.fontMetrics
-      val timerBaseline = contentTop + answerHeight + timerSpacing - timerMetrics.ascent
+      val timerBaseline = contentTop + answerHeight + bylineSpacing + bylineHeight + timerSpacing - timerMetrics.ascent
       canvas.drawText(timerText, bounds.centerX(), timerBaseline, timerPaint)
     }
   }

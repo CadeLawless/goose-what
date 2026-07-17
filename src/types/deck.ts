@@ -1,6 +1,7 @@
 export type Card = {
   id: string;
   text: string;
+  byline?: string;
 };
 
 export type Deck = {
