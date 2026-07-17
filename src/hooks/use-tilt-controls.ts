@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import { DeviceMotion } from 'expo-sensors';
 
 import type { TiltAction } from '@/game/tilt-detector';
 import {
   createTiltDetectorState,
-  normalizeLandscapeTilt,
+  normalizePortraitCanvasTilt,
   updateTiltDetector,
 } from '@/game/tilt-detector';
 
@@ -25,17 +25,11 @@ export function useTiltControls({ enabled, acceptingInput, onAction, onRearmed }
   const onActionRef = useRef(onAction);
   const onRearmedRef = useRef(onRearmed);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     acceptingInputRef.current = acceptingInput;
-  }, [acceptingInput]);
-
-  useEffect(() => {
     onActionRef.current = onAction;
-  }, [onAction]);
-
-  useEffect(() => {
     onRearmedRef.current = onRearmed;
-  }, [onRearmed]);
+  }, [acceptingInput, onAction, onRearmed]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -78,11 +72,10 @@ export function useTiltControls({ enabled, acceptingInput, onAction, onRearmed }
       setStatus('calibrating');
       try {
         subscription = DeviceMotion.addListener((measurement) => {
-          const angle = normalizeLandscapeTilt(
-            measurement.rotation.gamma,
-            measurement.orientation,
-          );
-          if (angle === null) return;
+          // Ready/Game remain portrait-locked at the native level and rotate their
+          // canvas visually. DeviceMotion.orientation therefore cannot determine
+          // whether these screens are being used in landscape.
+          const angle = normalizePortraitCanvasTilt(measurement.rotation.gamma);
           const result = updateTiltDetector(
             detector.current,
             angle,

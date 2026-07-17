@@ -193,6 +193,12 @@ export function normalizeLandscapeTilt(
   return null;
 }
 
+export function normalizePortraitCanvasTilt(gamma: number) {
+  // The native window is portrait while the game canvas is rotated clockwise.
+  // Reverse gamma so a tilt toward the floor remains Correct in visual landscape.
+  return -gamma;
+}
+
 export function isLandscapeOrientation(orientation: number): orientation is LandscapeOrientation {
   return orientation === 90 || orientation === -90;
 }

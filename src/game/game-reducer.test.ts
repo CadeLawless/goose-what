@@ -14,6 +14,7 @@ import {
   DEFAULT_TILT_CONFIG,
   isForeheadPosition,
   normalizeLandscapeTilt,
+  normalizePortraitCanvasTilt,
   unwrapTiltAngle,
   updateTiltDetector,
 } from './tilt-detector';
@@ -301,6 +302,11 @@ describe('tilt detector', () => {
     assert.equal(normalizeLandscapeTilt(0.5, 90), 0.5);
     assert.equal(normalizeLandscapeTilt(0.5, -90), -0.5);
     assert.equal(normalizeLandscapeTilt(0.5, 0), null);
+  });
+
+  it('normalizes motion for the portrait-locked clockwise game canvas', () => {
+    assert.equal(normalizePortraitCanvasTilt(0.5), -0.5);
+    assert.equal(normalizePortraitCanvasTilt(-0.5), 0.5);
   });
 
   it('unwraps the gamma discontinuity without reversing the gesture', () => {
