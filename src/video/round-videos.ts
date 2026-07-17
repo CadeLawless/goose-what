@@ -86,8 +86,9 @@ export async function loadRoundVideos() {
             : ('ready' as const),
       };
     });
-  const recovered = recoverCompletedExports(videoDirectory, available, File);
-  const next = [...available, ...recovered]
+  const uniqueAvailable = deduplicateRoundVideosById(available);
+  const recovered = recoverCompletedExports(videoDirectory, uniqueAvailable, File);
+  const next = [...uniqueAvailable, ...recovered]
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, MAX_STORED_VIDEOS);
   if (JSON.stringify(next.map(toStoredRoundVideo)) !== JSON.stringify(storedVideos)) {
@@ -479,16 +480,25 @@ function recoverCompletedExports(
   const knownFiles = new Set(
     videos.flatMap((video) => [video.uri, video.audioUri, video.exportUri].filter(Boolean)),
   );
+  const knownVideoIds = new Set(videos.map((video) => video.id.toLowerCase()));
+  const skippedExistingVideoIds: string[] = [];
   const recovered = videoDirectory
     .list()
     .filter((entry): entry is import('expo-file-system').File => entry instanceof FileType)
     .flatMap((file) => {
       const match = file.name.match(COMPLETED_EXPORT_PATTERN);
       if (!match || knownFiles.has(file.uri)) return [];
-      const createdAt = Number(match[1].split('-', 1)[0]);
+      const recoveredId = match[1];
+      const normalizedRecoveredId = recoveredId.toLowerCase();
+      if (knownVideoIds.has(normalizedRecoveredId)) {
+        skippedExistingVideoIds.push(recoveredId);
+        return [];
+      }
+      knownVideoIds.add(normalizedRecoveredId);
+      const createdAt = Number(recoveredId.split('-', 1)[0]);
       return [
         {
-          id: match[1],
+          id: recoveredId,
           uri: file.uri,
           exportStatus: 'ready' as const,
           deckId: 'recovered',
@@ -496,6 +506,12 @@ function recoverCompletedExports(
         },
       ];
     });
+  if (skippedExistingVideoIds.length > 0) {
+    logVideoDiagnostic('completed export recovery skipped duplicate video ids', {
+      skippedCount: skippedExistingVideoIds.length,
+      skippedVideoIds: skippedExistingVideoIds,
+    });
+  }
   if (recovered.length > 0) {
     logVideoDiagnostic('completed round videos recovered from device storage', {
       recoveredCount: recovered.length,
@@ -503,6 +519,30 @@ function recoverCompletedExports(
     });
   }
   return recovered;
+}
+
+function deduplicateRoundVideosById(videos: RoundVideo[]) {
+  const videosById = new Map<string, RoundVideo>();
+  const duplicateVideoIds: string[] = [];
+  for (const video of videos) {
+    const normalizedId = video.id.toLowerCase();
+    const existing = videosById.get(normalizedId);
+    if (!existing) {
+      videosById.set(normalizedId, video);
+      continue;
+    }
+    duplicateVideoIds.push(video.id);
+    if (existing.deckId === 'recovered' && video.deckId !== 'recovered') {
+      videosById.set(normalizedId, video);
+    }
+  }
+  if (duplicateVideoIds.length > 0) {
+    logVideoDiagnostic('duplicate round video metadata repaired', {
+      duplicateCount: duplicateVideoIds.length,
+      duplicateVideoIds,
+    });
+  }
+  return [...videosById.values()];
 }
 
 function deleteVideoFiles(
