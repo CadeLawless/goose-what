@@ -4,6 +4,7 @@ import {
   type PropsWithChildren,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useReducer,
   useRef,
@@ -36,10 +37,18 @@ import {
   type RoundVideoEvent,
 } from '@/video/round-videos';
 import {
+  resolveRoundAudioCues,
+  ROUND_VIDEO_SOUND_VOLUME,
   stopRoundSoundsAfterRound,
-  type RoundSoundId,
+  subscribeToRoundSoundPlayback,
   type RoundVideoSoundCue,
+  waitForPendingRoundSoundResults,
 } from '@/video/round-sounds';
+import {
+  createPendingRoundSoundCue,
+  finalizeRoundSoundReceipts,
+  type PendingRoundVideoSoundCue,
+} from '@/video/round-sound-receipts';
 import { logVideoDiagnostic, warnVideoDiagnostic } from '@/video/video-diagnostics';
 
 export type RecordingPreparation = 'ready' | 'permission-denied' | 'unavailable' | 'error';
@@ -63,7 +72,6 @@ type RoundContextValue = {
   prepareRecording: () => Promise<RecordingPreparation>;
   startRecording: () => Promise<boolean>;
   recordOverlayEvent: (event: Omit<RoundVideoEvent, 'atMs'>) => void;
-  recordSoundCue: (sound: RoundSoundId) => void;
   stopRecording: () => Promise<RoundVideo | null>;
   pauseRecording: () => Promise<void>;
   resumeRecording: () => Promise<boolean>;
@@ -95,7 +103,7 @@ export function RoundProvider({ children }: PropsWithChildren) {
   const segmentStoppingPromise = useRef<Promise<void> | null>(null);
   const recordingStartedAt = useRef<number | null>(null);
   const recordingEvents = useRef<RoundVideoEvent[]>([]);
-  const recordingSoundCues = useRef<RoundVideoSoundCue[]>([]);
+  const recordingSoundCues = useRef<PendingRoundVideoSoundCue[]>([]);
   const recordingSegments = useRef<CapturedRoundSegment[]>([]);
 
   const rememberCard = useCallback((deckId: string | null, cardId: string | undefined) => {
@@ -111,13 +119,50 @@ export function RoundProvider({ children }: PropsWithChildren) {
     recordingEvents.current.push({ ...event, atMs });
   }, []);
 
-  const recordSoundCue = useCallback((sound: RoundSoundId) => {
-    if (recordingStartedAt.current === null || !recordingActive.current) return;
-    recordingSoundCues.current.push({
-      atMs: Math.max(0, Date.now() - recordingStartedAt.current),
-      sound,
-    });
-  }, []);
+  useEffect(
+    () =>
+      subscribeToRoundSoundPlayback((event) => {
+        if (event.phase === 'requested') {
+          const startedAt = recordingStartedAt.current;
+          if (startedAt === null || !recordingActive.current) {
+            logVideoDiagnostic('round cue request occurred outside active recording', {
+              requestId: event.requestId,
+              sound: event.sound,
+            });
+            return;
+          }
+          const cue = createPendingRoundSoundCue(
+            event.requestId,
+            event.sound,
+            event.requestedAt,
+            startedAt,
+          );
+          recordingSoundCues.current.push(cue);
+          logVideoDiagnostic('round cue request attached to recording segment', cue);
+          return;
+        }
+
+        const cue = recordingSoundCues.current.find(
+          (candidate) => candidate.requestId === event.requestId,
+        );
+        if (!cue) {
+          logVideoDiagnostic('round cue result had no active recording request', {
+            requestId: event.requestId,
+            sound: event.sound,
+            wasAudible: event.wasAudible,
+          });
+          return;
+        }
+        cue.wasAudible = event.wasAudible;
+        logVideoDiagnostic('round cue recording decision resolved', {
+          atMs: cue.atMs,
+          requestId: cue.requestId,
+          sound: cue.sound,
+          wasAudible: cue.wasAudible,
+        });
+      }),
+    [],
+  );
 
   const getRecordingTimerEndsAtMs = useCallback((endsAt: number | null) => {
     if (endsAt === null || recordingStartedAt.current === null) return undefined;
@@ -243,12 +288,20 @@ export function RoundProvider({ children }: PropsWithChildren) {
   const captureActiveSegment = useCallback(async () => {
     const startedAt = recordingStartedAt.current;
     if (!recordingActive.current || startedAt === null) return null;
-    const stoppedAt = Date.now();
-    const events = [...recordingEvents.current];
-    const soundCues = [...recordingSoundCues.current];
     recordingActive.current = false;
-    recordingStartedAt.current = null;
     setIsRecording(false);
+    const soundResultsSettled = await waitForPendingRoundSoundResults();
+    const events = [...recordingEvents.current];
+    const pendingSoundCues = [...recordingSoundCues.current];
+    const soundReceiptSummary = finalizeRoundSoundReceipts(pendingSoundCues);
+    const soundCues = soundReceiptSummary.audibleCues;
+    recordingStartedAt.current = null;
+    logVideoDiagnostic('recording segment cue decisions finalized', {
+      audibleCueCount: soundCues.length,
+      ...soundReceiptSummary,
+      soundResultsSettled,
+    });
+    const stoppedAt = Date.now();
     const capture = await withTimeout(
       cameraRef.current?.stopRecording() ?? Promise.resolve(null),
       CAMERA_CAPTURE_STOP_TIMEOUT_MS,
@@ -343,12 +396,15 @@ export function RoundProvider({ children }: PropsWithChildren) {
     setCameraEnabled(false);
     setMicrophoneEnabled(false);
     stopRoundSoundsAfterRound();
+    logVideoDiagnostic('resetting global audio mode after native recording session');
     setAudioModeAsync({
       allowsRecording: false,
       interruptionMode: 'mixWithOthers',
       playsInSilentMode: true,
       shouldRouteThroughEarpiece: false,
-    }).catch(() => undefined);
+    })
+      .then(() => logVideoDiagnostic('global audio mode reset after native recording session'))
+      .catch((error) => warnVideoDiagnostic('global audio mode reset failed', error));
   }, []);
 
   const stopRecording = useCallback(async () => {
@@ -372,7 +428,7 @@ export function RoundProvider({ children }: PropsWithChildren) {
 
         const preparedSegments: { videoUri: string; audioUri: string | null }[] = [];
         for (const segment of segments) {
-          const { capture } = segment;
+          const { capture, soundCues } = segment;
           temporaryUris.push(capture.videoUri, capture.microphoneUri);
           let audioUri = capture.microphoneUri;
           if (Platform.OS === 'ios' && capture.microphoneUri) {
@@ -384,16 +440,19 @@ export function RoundProvider({ children }: PropsWithChildren) {
                   capture.videoUri,
                   capture.microphoneUri,
                   capture.microphoneOffsetMs,
-                  [],
-                  0,
+                  await resolveRoundAudioCues(soundCues),
+                  ROUND_VIDEO_SOUND_VOLUME,
                 );
                 temporaryUris.push(audioUri);
-                logVideoDiagnostic('recording segment microphone aligned', {
-                  alignedAudioUri: audioUri,
+                logVideoDiagnostic('recording segment voice and confirmed cues mixed', {
+                  audibleCueCount: soundCues.length,
+                  cueVolume: ROUND_VIDEO_SOUND_VOLUME,
+                  mixedAudioUri: audioUri,
                 });
               }
             } catch (error) {
-              warnVideoDiagnostic('microphone alignment failed; preserving captured audio', error, {
+              warnVideoDiagnostic('voice/cue mix failed; preserving captured microphone', error, {
+                audibleCueCount: soundCues.length,
                 microphoneUri: capture.microphoneUri,
               });
               audioUri = capture.microphoneUri;
@@ -505,7 +564,6 @@ export function RoundProvider({ children }: PropsWithChildren) {
       prepareRecording,
       startRecording,
       recordOverlayEvent,
-      recordSoundCue,
       stopRecording,
       pauseRecording,
       resumeRecording,
@@ -621,7 +679,6 @@ export function RoundProvider({ children }: PropsWithChildren) {
       prepareRecording,
       pauseRecording,
       recordOverlayEvent,
-      recordSoundCue,
       rememberCard,
       resumeRecording,
       retryCurrentVideoExport,

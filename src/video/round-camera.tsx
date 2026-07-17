@@ -78,8 +78,8 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
   function RoundCamera({ enabled, microphoneEnabled, onError, onReady }, ref) {
     const device = useCameraDevice('front');
     const videoOutput = useVideoOutput({
-      // iOS records a separate microphone track. The saved video uses only what
-      // that microphone heard, including any round cue audible from the speaker.
+      // iOS records a separate Apple voice-processed microphone track. Export
+      // keeps it constant and adds only confirmed-audible cues on a quiet bus.
       enableAudio: microphoneEnabled && Platform.OS !== 'ios',
       fileType: 'mp4',
     });

@@ -20,7 +20,6 @@ import {
   playRoundSound,
   prepareRoundSoundsForPlayback,
   rewindRoundSoundPlayer,
-  subscribeToSilentSwitch,
   type RoundSoundId,
 } from '@/video/round-sounds';
 import { logRoundDiagnostic, warnRoundDiagnostic } from '@/video/video-diagnostics';
@@ -201,23 +200,6 @@ export function RoundSoundProvider({ children }: PropsWithChildren) {
     logRoundDiagnostic('rewinding completed countdown player', { name: 'final-tick-b' });
     void tick2.seekTo(0);
   }, [tick2, tick2Status.didJustFinish]);
-
-  useEffect(
-    () =>
-      subscribeToSilentSwitch((silentSwitchOn) => {
-        if (!silentSwitchOn) return;
-        let stoppedPlayerCount = 0;
-        for (const player of [...Object.values(regularPlayers), ...tickPlayers]) {
-          if (!player.playing) continue;
-          player.pause();
-          stoppedPlayerCount += 1;
-        }
-        logRoundDiagnostic('active live cues stopped after silent switch enabled', {
-          stoppedPlayerCount,
-        });
-      }),
-    [regularPlayers, tickPlayers],
-  );
 
   const play = useCallback(
     (sound: RoundSoundId) => {

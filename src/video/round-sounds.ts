@@ -2,7 +2,6 @@ import { Asset } from 'expo-asset';
 import { preload, type AudioPlayer } from 'expo-audio';
 import { Platform } from 'react-native';
 
-import { shouldSuppressLiveRoundSound } from '@/video/silent-switch-policy';
 import {
   logRoundDiagnostic,
   logVideoDiagnostic,
@@ -27,7 +26,22 @@ export type RoundVideoSoundCue = {
   sound: RoundSoundId;
 };
 
-type SilentSwitchListener = (silentSwitchOn: boolean) => void;
+export type RoundSoundPlaybackEvent =
+  | {
+      phase: 'requested';
+      requestId: string;
+      requestedAt: number;
+      sound: RoundSoundId;
+    }
+  | {
+      phase: 'resolved';
+      requestId: string;
+      requestedAt: number;
+      sound: RoundSoundId;
+      wasAudible: boolean;
+    };
+
+type RoundSoundPlaybackListener = (event: RoundSoundPlaybackEvent) => void;
 
 const ROUND_SOUND_SOURCES: Record<RoundSoundId, number> = {
   'get-ready': require('../../assets/sounds/get-ready.wav'),
@@ -42,28 +56,29 @@ const ROUND_SOUND_SOURCES: Record<RoundSoundId, number> = {
   'round-end': require('../../assets/sounds/round-end.wav'),
 };
 
-// Begin native decoder/buffer preparation as soon as the app bundle loads.
-// The persistent sound provider still verifies that every player is loaded
-// before allowing a round to begin.
-for (const [sound, source] of Object.entries(ROUND_SOUND_SOURCES)) {
-  void preload(source)
-    .then(() => logRoundDiagnostic('native audio preload completed', { sound }))
-    .catch((error) => warnRoundDiagnostic('native audio preload failed', error, { sound }));
-}
+// This is a hard export ceiling for the clean cue bus. The voice-processed
+// microphone remains at 1.0 for the entire video.
+export const ROUND_VIDEO_SOUND_VOLUME = 0.08;
 
 const soundUriPromises = new Map<RoundSoundId, Promise<string>>();
+const playbackListeners = new Set<RoundSoundPlaybackListener>();
+const pendingPlaybackResults = new Set<Promise<void>>();
 const DEFAULT_ROUND_SOUND_VOLUME = 1;
-const SILENT_SWITCH_PROBE_INTERVAL_MS = 80;
 const ROUND_SOUND_VOLUMES: Partial<Record<RoundSoundId, number>> = {
   correct: 0.4,
   flip: 0.7,
   'round-start': 0.65,
 };
-let silentSwitchMonitorGeneration = 0;
-let silentSwitchMonitorTimeout: ReturnType<typeof setTimeout> | undefined;
-let silentSwitchOn = false;
-let silentSwitchMonitoringSupported = false;
-const silentSwitchListeners = new Set<SilentSwitchListener>();
+let nativeCuePlaybackPrepared = false;
+let nextPlaybackRequestId = 1;
+
+// Begin decoder/buffer preparation as soon as the bundle loads. Expo players
+// remain available for Android and as a fallback for older iOS app binaries.
+for (const [sound, source] of Object.entries(ROUND_SOUND_SOURCES)) {
+  void preload(source)
+    .then(() => logRoundDiagnostic('native audio preload completed', { sound }))
+    .catch((error) => warnRoundDiagnostic('native audio preload failed', error, { sound }));
+}
 
 export function getRoundSoundSource(sound: RoundSoundId) {
   return ROUND_SOUND_SOURCES[sound];
@@ -73,127 +88,177 @@ export function preloadRoundSounds(sounds: RoundSoundId[]) {
   return Promise.all(sounds.map(resolveRoundSoundUri));
 }
 
-export function subscribeToSilentSwitch(listener: SilentSwitchListener) {
-  silentSwitchListeners.add(listener);
+export function subscribeToRoundSoundPlayback(listener: RoundSoundPlaybackListener) {
+  playbackListeners.add(listener);
   return () => {
-    silentSwitchListeners.delete(listener);
+    playbackListeners.delete(listener);
   };
 }
 
 export async function prepareRoundSoundsForPlayback() {
   if (Platform.OS !== 'ios') return;
-  const { probeSilentSwitch, supportsSilentSwitchMonitoring } =
+  const sounds = Object.keys(ROUND_SOUND_SOURCES) as RoundSoundId[];
+  const uris = await preloadRoundSounds(sounds);
+  const { prepareSystemSound, supportsSilentAwareCueReceipts } =
     await import('whatz-it-video-export');
-  silentSwitchMonitoringSupported = supportsSilentSwitchMonitoring();
-  if (!silentSwitchMonitoringSupported) return;
-
-  silentSwitchMonitorGeneration += 1;
-  const generation = silentSwitchMonitorGeneration;
-  if (silentSwitchMonitorTimeout) clearTimeout(silentSwitchMonitorTimeout);
-
-  const runProbe = async () => {
-    try {
-      const nextSilentSwitchOn = await probeSilentSwitch();
-      if (generation !== silentSwitchMonitorGeneration) return;
-      if (silentSwitchOn !== nextSilentSwitchOn) {
-        logRoundDiagnostic('silent-switch state changed', {
-          silentSwitchOn: nextSilentSwitchOn,
-        });
-        for (const listener of silentSwitchListeners) listener(nextSilentSwitchOn);
-      }
-      silentSwitchOn = nextSilentSwitchOn;
-    } catch (error) {
-      if (generation !== silentSwitchMonitorGeneration) return;
-      // Fail closed so a detection problem cannot make a supposedly silent
-      // phone emit a live cue. Video cues are recorded independently.
-      if (!silentSwitchOn) {
-        for (const listener of silentSwitchListeners) listener(true);
-      }
-      silentSwitchOn = true;
-      warnRoundDiagnostic('silent-switch probe failed; suppressing live cues', error);
-    }
-    if (generation !== silentSwitchMonitorGeneration) return;
-    silentSwitchMonitorTimeout = setTimeout(() => void runProbe(), SILENT_SWITCH_PROBE_INTERVAL_MS);
-  };
-
-  // The ready screen waits for this first result before beginning its audio.
-  await runProbe();
-  logRoundDiagnostic('silent-switch monitoring started', { silentSwitchOn });
+  nativeCuePlaybackPrepared = supportsSilentAwareCueReceipts();
+  if (!nativeCuePlaybackPrepared) {
+    logRoundDiagnostic('native silent-aware cue playback unavailable; using Expo fallback');
+    return;
+  }
+  await Promise.all(uris.map(prepareSystemSound));
+  logRoundDiagnostic('native silent-aware cue playback prepared', {
+    soundCount: sounds.length,
+  });
 }
 
 export function stopRoundSoundsAfterRound() {
-  silentSwitchMonitorGeneration += 1;
-  if (silentSwitchMonitorTimeout) clearTimeout(silentSwitchMonitorTimeout);
-  silentSwitchMonitorTimeout = undefined;
-  silentSwitchOn = false;
-  silentSwitchMonitoringSupported = false;
-  logRoundDiagnostic('silent-switch monitoring stopped');
+  logRoundDiagnostic('round sound session stopped', {
+    pendingPlaybackResultCount: pendingPlaybackResults.size,
+  });
+  nativeCuePlaybackPrepared = false;
+}
+
+export async function waitForPendingRoundSoundResults(timeoutMs = 2_500) {
+  const pending = [...pendingPlaybackResults];
+  if (pending.length === 0) return true;
+  let timedOut = false;
+  await Promise.race([
+    Promise.allSettled(pending),
+    new Promise<void>((resolve) =>
+      setTimeout(() => {
+        timedOut = true;
+        resolve();
+      }, timeoutMs),
+    ),
+  ]);
+  logRoundDiagnostic('pending round sound results settled', {
+    pendingCount: pending.length,
+    remainingCount: pendingPlaybackResults.size,
+    timedOut,
+    timeoutMs,
+  });
+  return !timedOut;
 }
 
 export async function playRoundSound(player: AudioPlayer, sound: RoundSoundId) {
-  logRoundDiagnostic('audio playback function entered', {
+  const requestedAt = Date.now();
+  const requestId = `${requestedAt}-${nextPlaybackRequestId++}`;
+  emitPlaybackEvent({ phase: 'requested', requestId, requestedAt, sound });
+  logRoundDiagnostic('audio cue requested', {
+    requestId,
     sound,
-    currentTime: player.currentTime,
-    duration: player.duration,
-    isBuffering: player.isBuffering,
-    isLoaded: player.isLoaded,
-    paused: player.paused,
-    playing: player.playing,
+    nativeCuePlaybackPrepared,
+    playerDuration: player.duration,
+    playerIsLoaded: player.isLoaded,
   });
+
+  if (Platform.OS === 'ios' && nativeCuePlaybackPrepared) {
+    try {
+      const uri = await resolveRoundSoundUri(sound);
+      const { playSystemSound } = await import('whatz-it-video-export');
+      const result = playSystemSound(uri)
+        .then((wasAudible) => {
+          emitPlaybackEvent({
+            phase: 'resolved',
+            requestId,
+            requestedAt,
+            sound,
+            wasAudible,
+          });
+          logRoundDiagnostic('native audio cue result received', {
+            requestId,
+            sound,
+            wasAudible,
+          });
+        })
+        .catch((error) => {
+          emitPlaybackEvent({
+            phase: 'resolved',
+            requestId,
+            requestedAt,
+            sound,
+            wasAudible: false,
+          });
+          warnVideoDiagnostic('native round cue result failed; excluding cue from export', error, {
+            requestId,
+            sound,
+          });
+        })
+        .finally(() => pendingPlaybackResults.delete(result));
+      pendingPlaybackResults.add(result);
+      logVideoDiagnostic('native silent-aware round cue dispatched', {
+        requestId,
+        sound,
+        uri,
+      });
+      return true;
+    } catch (error) {
+      emitPlaybackEvent({
+        phase: 'resolved',
+        requestId,
+        requestedAt,
+        sound,
+        wasAudible: false,
+      });
+      warnVideoDiagnostic('native round cue dispatch failed', error, { requestId, sound });
+      return false;
+    }
+  }
+
   if (!player.isLoaded) {
-    warnVideoDiagnostic('round cue skipped because its player is not loaded', undefined, { sound });
+    emitPlaybackEvent({
+      phase: 'resolved',
+      requestId,
+      requestedAt,
+      sound,
+      wasAudible: false,
+    });
+    warnVideoDiagnostic('round cue skipped because its player is not loaded', undefined, {
+      requestId,
+      sound,
+    });
     return false;
   }
 
   try {
-    if (Platform.OS === 'ios') {
-      if (
-        shouldSuppressLiveRoundSound({
-          platform: Platform.OS,
-          monitoringSupported: silentSwitchMonitoringSupported,
-          silentSwitchOn,
-        })
-      ) {
-        logRoundDiagnostic('live round cue suppressed by silent switch', {
-          sound,
-          playbackPath: 'expo-audio-gated',
-        });
-        // Suppression is successful playback policy, not an audio-loading
-        // failure. Returning true keeps the ready sequence moving normally.
-        return true;
-      }
-    }
-
     const volume = ROUND_SOUND_VOLUMES[sound] ?? DEFAULT_ROUND_SOUND_VOLUME;
     if (player.playing) player.pause();
-    if (player.currentTime > 0.005) {
-      const seekStartedAt = Date.now();
-      logRoundDiagnostic('audio cue rewind started', { sound, from: player.currentTime });
-      await player.seekTo(0);
-      logRoundDiagnostic('audio cue rewind completed', {
+    if (player.currentTime > 0.005) await player.seekTo(0);
+    if (!player.isLoaded) {
+      emitPlaybackEvent({
+        phase: 'resolved',
+        requestId,
+        requestedAt,
         sound,
-        elapsedMs: Date.now() - seekStartedAt,
-        currentTime: player.currentTime,
+        wasAudible: false,
       });
+      return false;
     }
-    if (!player.isLoaded) return false;
     player.volume = volume;
     player.play();
-    logRoundDiagnostic('native audio play invoked', {
+    emitPlaybackEvent({
+      phase: 'resolved',
+      requestId,
+      requestedAt,
       sound,
-      volume,
-      currentTime: player.currentTime,
-      duration: player.duration,
-      playing: player.playing,
+      wasAudible: true,
     });
-    logVideoDiagnostic('round cue playback started', {
+    logVideoDiagnostic('Expo fallback round cue started', {
+      requestId,
       sound,
       volume,
     });
     return true;
   } catch (error) {
-    warnVideoDiagnostic('round cue playback failed', error, { sound });
-    // A cue should never interrupt the round if the device cannot play it.
+    emitPlaybackEvent({
+      phase: 'resolved',
+      requestId,
+      requestedAt,
+      sound,
+      wasAudible: false,
+    });
+    warnVideoDiagnostic('round cue playback failed', error, { requestId, sound });
     return false;
   }
 }
@@ -207,6 +272,19 @@ export async function rewindRoundSoundPlayer(player: AudioPlayer) {
   } catch {
     return false;
   }
+}
+
+export async function resolveRoundAudioCues(cues: RoundVideoSoundCue[]) {
+  return Promise.all(
+    cues.map(async (cue) => ({
+      atMs: cue.atMs,
+      uri: await resolveRoundSoundUri(cue.sound),
+    })),
+  );
+}
+
+function emitPlaybackEvent(event: RoundSoundPlaybackEvent) {
+  for (const listener of playbackListeners) listener(event);
 }
 
 async function resolveRoundSoundUri(sound: RoundSoundId) {

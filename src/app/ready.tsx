@@ -30,7 +30,6 @@ export default function ReadyScreen() {
     pauseRecording,
     prepareRecording,
     recordOverlayEvent,
-    recordSoundCue,
     round,
     resetRound,
     resumeRecording,
@@ -75,7 +74,6 @@ export default function ReadyScreen() {
       const sound: RoundSoundId =
         remaining === 3 ? 'count-3' : remaining === 2 ? 'count-2' : 'count-1';
       recordOverlayEvent({ kind: 'countdown', text: String(remaining) });
-      recordSoundCue(sound);
       logRoundDiagnostic('ready countdown cue firing', {
         remaining,
         sound,
@@ -88,19 +86,18 @@ export default function ReadyScreen() {
       });
       void playSound(sound);
     },
-    [countdownEndsAt, isRecording, playSound, recordOverlayEvent, recordSoundCue],
+    [countdownEndsAt, isRecording, playSound, recordOverlayEvent],
   );
   const handleCountdownExpire = useCallback(() => {
     if (launched.current) return;
     launched.current = true;
-    recordSoundCue('round-start');
     void playSound('round-start');
     logRoundDiagnostic('ready countdown expired; playing round start cue and navigating to game', {
       countdownEndsAt,
       now: Date.now(),
     });
     router.replace('/game' as Href);
-  }, [countdownEndsAt, playSound, recordSoundCue, router]);
+  }, [countdownEndsAt, playSound, router]);
   const count = useRoundTimer({
     endsAt: countdownEndsAt,
     active: appActive && introComplete && !isLeaving,
@@ -269,7 +266,6 @@ export default function ReadyScreen() {
       // Recording must be active before the first note so Get Ready is present
       // in the saved round video from its beginning.
       void triggerRoundHaptic('get-ready', { cameraActive: started });
-      recordSoundCue('get-ready');
       const played = await playSound('get-ready');
       logRoundDiagnostic('get-ready playback request completed', { active, played });
       if (!active) return;
@@ -294,7 +290,6 @@ export default function ReadyScreen() {
     positionReady,
     recordingPreparation,
     recordingPrepared,
-    recordSoundCue,
     soundsPrepared,
     startRecording,
   ]);

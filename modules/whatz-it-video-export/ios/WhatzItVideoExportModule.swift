@@ -34,6 +34,7 @@ private struct OverlayTimelineFrame {
 
 private struct SystemSoundPool {
   let soundIds: [SystemSoundID]
+  let duration: TimeInterval
   var nextIndex = 0
 }
 
@@ -81,8 +82,6 @@ public final class WhatzItVideoExportModule: Module {
   private var microphoneRecordingUrl: URL?
   private let systemSoundsLock = NSLock()
   private var systemSoundPools = [String: SystemSoundPool]()
-  private let silentSwitchLock = NSLock()
-  private var silentSwitchProbeId: SystemSoundID?
 
   deinit {
     for pool in self.systemSoundPools.values {
@@ -90,16 +89,13 @@ public final class WhatzItVideoExportModule: Module {
         AudioServicesDisposeSystemSoundID(soundId)
       }
     }
-    if let silentSwitchProbeId = self.silentSwitchProbeId {
-      AudioServicesDisposeSystemSoundID(silentSwitchProbeId)
-    }
   }
 
   public func definition() -> ModuleDefinition {
     Name("WhatzItVideoExport")
 
     Constant("overlayExportVersion") {
-      16
+      17
     }
 
     AsyncFunction("exportOverlayVideo") {
@@ -199,7 +195,7 @@ public final class WhatzItVideoExportModule: Module {
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
         self.microphoneEngine = nil
-        capturePath = "video-recording-audio-engine"
+        capturePath = "voice-processing-engine"
       } else if let recorder = self.microphoneRecorder {
         recorder.updateMeters()
         let duration = recorder.currentTime
@@ -244,24 +240,19 @@ public final class WhatzItVideoExportModule: Module {
       NSLog("[RoundAudioNative] Microphone capture cancelled")
     }
 
-    AsyncFunction("probeSilentSwitch") { () async throws -> Bool in
-      let soundId = try self.prepareSilentSwitchProbe()
-      let elapsed = await Self.measureSystemSoundDuration(soundId)
-      return Self.durationIndicatesSilentSwitch(elapsed)
-    }
-
     AsyncFunction("prepareSystemSound") { (inputUrl: URL) throws in
       try self.prepareSystemSound(inputUrl)
     }
 
-    AsyncFunction("playSystemSound") { (inputUrl: URL) throws in
-      let soundId = try self.nextSystemSoundId(inputUrl)
-      AudioServicesPlaySystemSound(soundId)
+    AsyncFunction("playSystemSound") { (inputUrl: URL) async throws -> Bool in
+      let sound = try self.nextSystemSound(inputUrl)
+      return await Self.playSystemSound(
+        sound.id,
+        expectedDuration: sound.duration,
+        source: inputUrl.lastPathComponent
+      )
     }
 
-    AsyncFunction("stopSystemSound") { (inputUrl: URL) in
-      self.disposeSystemSoundPool(inputUrl)
-    }
   }
 
   private func prepareSystemSound(_ inputUrl: URL) throws {
@@ -271,10 +262,16 @@ public final class WhatzItVideoExportModule: Module {
     self.systemSoundsLock.unlock()
     if isPrepared { return }
 
+    let audioFile = try AVAudioFile(forReading: inputUrl)
+    let sampleRate = audioFile.processingFormat.sampleRate
+    let duration = sampleRate > 0 ? Double(audioFile.length) / sampleRate : 0
+    guard duration > 0 else {
+      throw VideoExportError.exportFailed("A round sound has no readable duration.")
+    }
     var soundIds = [SystemSoundID]()
     do {
-      // Two IDs allow the one-second countdown tick to overlap its short tail
-      // without restarting the prior instance.
+      // Two IDs keep consecutive requests from reusing an identifier whose
+      // completion callback is still pending.
       for _ in 0..<2 {
         var soundId: SystemSoundID = 0
         let creationStatus = AudioServicesCreateSystemSoundID(inputUrl as CFURL, &soundId)
@@ -304,8 +301,14 @@ public final class WhatzItVideoExportModule: Module {
 
     self.systemSoundsLock.lock()
     if self.systemSoundPools[key] == nil {
-      self.systemSoundPools[key] = SystemSoundPool(soundIds: soundIds)
+      self.systemSoundPools[key] = SystemSoundPool(soundIds: soundIds, duration: duration)
       self.systemSoundsLock.unlock()
+      NSLog(
+        "[RoundAudioNative] System sound prepared source=%@ durationMs=%.0f instances=%ld",
+        inputUrl.lastPathComponent,
+        duration * 1_000,
+        soundIds.count
+      )
     } else {
       self.systemSoundsLock.unlock()
       for soundId in soundIds {
@@ -314,82 +317,44 @@ public final class WhatzItVideoExportModule: Module {
     }
   }
 
-  private func prepareSilentSwitchProbe() throws -> SystemSoundID {
-    self.silentSwitchLock.lock()
-    defer { self.silentSwitchLock.unlock() }
-    if let soundId = self.silentSwitchProbeId { return soundId }
-
-    let probeUrl = FileManager.default.temporaryDirectory
-      .appendingPathComponent("whatz-it-silent-switch-probe.wav")
-    if !FileManager.default.fileExists(atPath: probeUrl.path) {
-      try Self.writeSilentSwitchProbe(to: probeUrl)
-    }
-
-    var soundId: SystemSoundID = 0
-    let creationStatus = AudioServicesCreateSystemSoundID(probeUrl as CFURL, &soundId)
-    guard creationStatus == kAudioServicesNoError else {
-      throw VideoExportError.systemSoundCreationFailed(creationStatus)
-    }
-    var isUiSound: UInt32 = 1
-    let propertyStatus = AudioServicesSetProperty(
-      kAudioServicesPropertyIsUISound,
-      UInt32(MemoryLayout<SystemSoundID>.size),
-      &soundId,
-      UInt32(MemoryLayout<UInt32>.size),
-      &isUiSound
-    )
-    guard propertyStatus == kAudioServicesNoError else {
-      AudioServicesDisposeSystemSoundID(soundId)
-      throw VideoExportError.systemSoundCreationFailed(propertyStatus)
-    }
-    self.silentSwitchProbeId = soundId
-    return soundId
-  }
-
-  private static func measureSystemSoundDuration(_ soundId: SystemSoundID) async -> TimeInterval {
+  private static func playSystemSound(
+    _ soundId: SystemSoundID,
+    expectedDuration: TimeInterval,
+    source: String
+  ) async -> Bool {
     let startedAt = ProcessInfo.processInfo.systemUptime
-    return await withCheckedContinuation { continuation in
+    let audioSession = AVAudioSession.sharedInstance()
+    NSLog(
+      "[RoundAudioNative] System sound dispatched source=%@ soundId=%u expectedDurationMs=%.0f sessionCategory=%@ sessionMode=%@ outputVolume=%.2f",
+      source,
+      soundId,
+      expectedDuration * 1_000,
+      audioSession.category.rawValue,
+      audioSession.mode.rawValue,
+      audioSession.outputVolume
+    )
+    let elapsed: TimeInterval = await withCheckedContinuation { continuation in
       AudioServicesPlaySystemSoundWithCompletion(soundId) {
         continuation.resume(returning: ProcessInfo.processInfo.systemUptime - startedAt)
       }
     }
+    // System Sound Services does not expose Ring/Silent state. UI sounds that
+    // are suppressed complete nearly immediately, while audible sounds retain
+    // most of their asset duration. Requiring 65% fails closed on ambiguity.
+    let audibleThreshold = max(0.08, expectedDuration * 0.65)
+    let wasAudible = elapsed >= audibleThreshold
+    NSLog(
+      "[RoundAudioNative] System sound completed source=%@ soundId=%u elapsedMs=%.0f thresholdMs=%.0f wasAudible=%@",
+      source,
+      soundId,
+      elapsed * 1_000,
+      audibleThreshold * 1_000,
+      wasAudible ? "true" : "false"
+    )
+    return wasAudible
   }
 
-  private static func durationIndicatesSilentSwitch(_ elapsed: TimeInterval) -> Bool {
-    // The probe contains 120 ms of silence. A UI sound suppressed by the
-    // Ring/Silent switch completes almost immediately; an allowed sound keeps
-    // its full timeline even though every sample is silent.
-    elapsed < 0.08
-  }
-
-  private static func writeSilentSwitchProbe(to url: URL) throws {
-    let sampleRate: UInt32 = 8_000
-    let frameCount: UInt32 = 960
-    var data = Data()
-    data.append(contentsOf: "RIFF".utf8)
-    appendLittleEndian(UInt32(36) + frameCount, to: &data)
-    data.append(contentsOf: "WAVEfmt ".utf8)
-    appendLittleEndian(UInt32(16), to: &data)
-    appendLittleEndian(UInt16(1), to: &data)
-    appendLittleEndian(UInt16(1), to: &data)
-    appendLittleEndian(sampleRate, to: &data)
-    appendLittleEndian(sampleRate, to: &data)
-    appendLittleEndian(UInt16(1), to: &data)
-    appendLittleEndian(UInt16(8), to: &data)
-    data.append(contentsOf: "data".utf8)
-    appendLittleEndian(frameCount, to: &data)
-    data.append(contentsOf: repeatElement(UInt8(128), count: Int(frameCount)))
-    try data.write(to: url, options: .atomic)
-  }
-
-  private static func appendLittleEndian<T: FixedWidthInteger>(_ value: T, to data: inout Data) {
-    var littleEndian = value.littleEndian
-    withUnsafeBytes(of: &littleEndian) { bytes in
-      data.append(contentsOf: bytes)
-    }
-  }
-
-  private func nextSystemSoundId(_ inputUrl: URL) throws -> SystemSoundID {
+  private func nextSystemSound(_ inputUrl: URL) throws -> (id: SystemSoundID, duration: TimeInterval) {
     try self.prepareSystemSound(inputUrl)
     let key = inputUrl.absoluteString
     self.systemSoundsLock.lock()
@@ -400,30 +365,28 @@ public final class WhatzItVideoExportModule: Module {
     let soundId = pool.soundIds[pool.nextIndex % pool.soundIds.count]
     pool.nextIndex += 1
     self.systemSoundPools[key] = pool
-    return soundId
-  }
-
-  private func disposeSystemSoundPool(_ inputUrl: URL) {
-    let key = inputUrl.absoluteString
-    self.systemSoundsLock.lock()
-    let pool = self.systemSoundPools.removeValue(forKey: key)
-    self.systemSoundsLock.unlock()
-    guard let pool else { return }
-    for soundId in pool.soundIds {
-      AudioServicesDisposeSystemSoundID(soundId)
-    }
+    return (soundId, pool.duration)
   }
 
   private func startMicrophoneCapture(at outputUrl: URL) throws -> String {
     do {
-      try Self.configureRecordingAudioSession(mode: .videoRecording)
+      try Self.configureRecordingAudioSession(mode: .videoChat)
       let engine = AVAudioEngine()
       let inputNode = engine.inputNode
       var tapInstalled = false
       do {
-        // Keep Apple's standard video-recording microphone mode, but avoid the
-        // call-oriented voice-processing stack. Export uses only this track at
-        // full volume, with no cue overlay, ducking, or custom cancellation.
+        // Restore Apple's device-tuned echo cancellation, noise suppression,
+        // and voice gain path. The export keeps this microphone track at a
+        // constant level and adds only silent-aware cues on a separate bus.
+        try inputNode.setVoiceProcessingEnabled(true)
+        inputNode.isVoiceProcessingAGCEnabled = true
+        if #available(iOS 17.0, *) {
+          inputNode.voiceProcessingOtherAudioDuckingConfiguration =
+            AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
+              enableAdvancedDucking: ObjCBool(false),
+              duckingLevel: .min
+            )
+        }
         let inputFormat = inputNode.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
           throw VideoExportError.microphoneStartFailed
@@ -454,6 +417,14 @@ public final class WhatzItVideoExportModule: Module {
         guard engine.isRunning else {
           throw VideoExportError.microphoneStartFailed
         }
+        NSLog(
+          "[RoundAudioNative] Voice processing started enabled=%@ agc=%@ bypassed=%@ sampleRate=%.0f channels=%u",
+          inputNode.isVoiceProcessingEnabled ? "true" : "false",
+          inputNode.isVoiceProcessingAGCEnabled ? "true" : "false",
+          inputNode.isVoiceProcessingBypassed ? "true" : "false",
+          inputFormat.sampleRate,
+          inputFormat.channelCount
+        )
       } catch {
         engine.stop()
         if tapInstalled {
@@ -463,10 +434,10 @@ public final class WhatzItVideoExportModule: Module {
       }
       self.microphoneEngine = engine
       self.microphoneRecordingUrl = outputUrl
-      return "video-recording-audio-engine"
+      return "voice-processing-engine"
     } catch {
       NSLog(
-        "[RoundAudioNative] Audio-engine capture unavailable; starting recorder fallback error=%@",
+        "[RoundAudioNative] Voice-processing capture unavailable; starting recorder fallback error=%@",
         error.localizedDescription
       )
       try? FileManager.default.removeItem(at: outputUrl)
@@ -537,7 +508,7 @@ public final class WhatzItVideoExportModule: Module {
   }
 
   private static func configureRecordingAudioSession(
-    mode: AVAudioSession.Mode = .videoRecording
+    mode: AVAudioSession.Mode = .videoChat
   ) throws {
     let audioSession = AVAudioSession.sharedInstance()
     try audioSession.setCategory(
@@ -547,14 +518,32 @@ public final class WhatzItVideoExportModule: Module {
     )
     try audioSession.setAllowHapticsAndSystemSoundsDuringRecording(true)
     try audioSession.setActive(true)
+    let inputRoutes = audioSession.currentRoute.inputs
+      .map { "\($0.portType.rawValue):\($0.portName)" }
+      .joined(separator: ",")
+    let outputRoutes = audioSession.currentRoute.outputs
+      .map { "\($0.portType.rawValue):\($0.portName)" }
+      .joined(separator: ",")
+    NSLog(
+      "[RoundAudioNative] Audio session active category=%@ mode=%@ sampleRate=%.0f ioBufferMs=%.1f inputGain=%.2f outputVolume=%.2f haptics=%@ inputs=%@ outputs=%@",
+      audioSession.category.rawValue,
+      audioSession.mode.rawValue,
+      audioSession.sampleRate,
+      audioSession.ioBufferDuration * 1_000,
+      audioSession.inputGain,
+      audioSession.outputVolume,
+      audioSession.allowHapticsAndSystemSoundsDuringRecording ? "true" : "false",
+      inputRoutes,
+      outputRoutes
+    )
   }
 
   private static func mixRoundAudio(
     videoUrl: URL,
     microphoneUrl: URL,
     microphoneOffsetMs: Double,
-    cues _: [RoundAudioCueRecord],
-    cueVolume _: Double,
+    cues: [RoundAudioCueRecord],
+    cueVolume: Double,
     outputUrl: URL
   ) async throws {
     let videoAsset = AVURLAsset(url: videoUrl)
@@ -585,10 +574,61 @@ public final class WhatzItVideoExportModule: Module {
       at: microphoneStart
     )
 
+    var effectTracks: [AVMutableCompositionTrack] = []
+    var effectTrackEnds: [CMTime] = []
+    var insertedCueCount = 0
+    for cue in cues.sorted(by: { $0.atMs < $1.atMs }) {
+      guard let cueUrl = URL(string: cue.uri) else { continue }
+      let cueStart = CMTime(seconds: max(0, cue.atMs / 1_000), preferredTimescale: 600)
+      guard cueStart < videoDuration else { continue }
+      let cueAsset = AVURLAsset(url: cueUrl)
+      guard let cueSourceTrack = try await cueAsset.loadTracks(withMediaType: .audio).first else {
+        continue
+      }
+      let cueDuration = try await cueAsset.load(.duration)
+      let insertDuration = CMTimeMinimum(cueDuration, CMTimeSubtract(videoDuration, cueStart))
+      guard insertDuration.isValid, insertDuration > .zero else { continue }
+
+      var trackIndex = effectTrackEnds.firstIndex(where: { $0 <= cueStart })
+      if trackIndex == nil {
+        guard let newTrack = composition.addMutableTrack(
+          withMediaType: .audio,
+          preferredTrackID: kCMPersistentTrackID_Invalid
+        ) else { continue }
+        effectTracks.append(newTrack)
+        effectTrackEnds.append(.zero)
+        trackIndex = effectTracks.count - 1
+      }
+      guard let index = trackIndex else { continue }
+      try effectTracks[index].insertTimeRange(
+        CMTimeRange(start: .zero, duration: insertDuration),
+        of: cueSourceTrack,
+        at: cueStart
+      )
+      effectTrackEnds[index] = CMTimeAdd(cueStart, insertDuration)
+      insertedCueCount += 1
+    }
+
     let audioMix = AVMutableAudioMix()
     let microphoneParameters = AVMutableAudioMixInputParameters(track: actualMicrophoneTrack)
     microphoneParameters.setVolume(1, at: .zero)
-    audioMix.inputParameters = [microphoneParameters]
+    let clampedCueVolume = Float(max(0, min(1, cueVolume)))
+    let effectParameters = effectTracks.map { track in
+      let parameters = AVMutableAudioMixInputParameters(track: track)
+      parameters.setVolume(clampedCueVolume, at: .zero)
+      return parameters
+    }
+    audioMix.inputParameters = [microphoneParameters] + effectParameters
+    NSLog(
+      "[RoundAudioNative] Export audio mix prepared requestedCues=%ld insertedCues=%ld cueTracks=%ld cueVolume=%.3f microphoneVolume=1.000 microphoneOffsetMs=%.0f videoDurationMs=%.0f microphoneDurationMs=%.0f",
+      cues.count,
+      insertedCueCount,
+      effectTracks.count,
+      Double(clampedCueVolume),
+      microphoneOffsetMs,
+      videoDuration.seconds * 1_000,
+      microphoneDuration.seconds * 1_000
+    )
 
     guard let exporter = AVAssetExportSession(
       asset: composition,
@@ -604,6 +644,11 @@ public final class WhatzItVideoExportModule: Module {
       duration: CMTimeMinimum(videoDuration, composition.duration)
     )
     try await run(exporter)
+    NSLog(
+      "[RoundAudioNative] Export audio mix completed output=%@ insertedCues=%ld",
+      outputUrl.lastPathComponent,
+      insertedCueCount
+    )
   }
 
   private static func stitchRoundVideoSegments(
@@ -771,9 +816,9 @@ public final class WhatzItVideoExportModule: Module {
     )
 
     let compatiblePresets = AVAssetExportSession.exportPresets(compatibleWith: videoCompositionAsset)
-    let preset = compatiblePresets.contains(AVAssetExportPreset1280x720)
-      ? AVAssetExportPreset1280x720
-      : AVAssetExportPresetHighestQuality
+    let preset = compatiblePresets.contains(AVAssetExportPresetHighestQuality)
+      ? AVAssetExportPresetHighestQuality
+      : AVAssetExportPreset1280x720
     guard let videoExporter = AVAssetExportSession(
       asset: videoCompositionAsset,
       presetName: preset
@@ -787,9 +832,17 @@ public final class WhatzItVideoExportModule: Module {
     videoExporter.outputURL = renderedVideoUrl
     videoExporter.outputFileType = .mp4
     videoExporter.shouldOptimizeForNetworkUse = false
-    videoExporter.canPerformMultiplePassesOverSourceMediaData = false
+    videoExporter.canPerformMultiplePassesOverSourceMediaData = true
     videoExporter.videoComposition = videoComposition
+    NSLog(
+      "[RoundVideoNative] Overlay render started preset=%@ renderWidth=%.0f renderHeight=%.0f durationMs=%.0f multiPass=true",
+      preset,
+      renderSize.width,
+      renderSize.height,
+      duration.seconds * 1_000
+    )
     try await run(videoExporter)
+    NSLog("[RoundVideoNative] Overlay render completed output=%@", renderedVideoUrl.lastPathComponent)
 
     let audioAsset: AVAsset?
     if let audioUrl {

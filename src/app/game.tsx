@@ -52,7 +52,6 @@ export default function GameScreen() {
     pauseRecording,
     pauseRound,
     recordOverlayEvent,
-    recordSoundCue,
     resumeRecording,
     resumeRound,
     startRound,
@@ -67,10 +66,9 @@ export default function GameScreen() {
     (remaining: number) => {
       if (remaining < 1 || remaining > 10) return;
       void triggerRoundHaptic('final-countdown', { cameraActive: isRecording });
-      recordSoundCue('final-tick');
       void playSound('final-tick');
     },
-    [isRecording, playSound, recordSoundCue],
+    [isRecording, playSound],
   );
 
   useEffect(() => {
@@ -89,24 +87,21 @@ export default function GameScreen() {
   const handleAnswer = useCallback(
     (outcome: 'correct' | 'passed') => {
       if (outcome === 'correct') {
-        recordSoundCue('correct');
         void playSound('correct');
         void triggerRoundHaptic('correct', { cameraActive: isRecording });
       } else {
-        recordSoundCue('pass');
         void playSound('pass');
         void triggerRoundHaptic('pass', { cameraActive: isRecording });
       }
       answerCard(outcome);
     },
-    [answerCard, isRecording, playSound, recordSoundCue],
+    [answerCard, isRecording, playSound],
   );
   const handleRearmed = useCallback(() => {
     void triggerRoundHaptic('card-flip', { cameraActive: isRecording });
-    recordSoundCue('flip');
     void playSound('flip');
     advanceCard();
-  }, [advanceCard, isRecording, playSound, recordSoundCue]);
+  }, [advanceCard, isRecording, playSound]);
   const tiltStatus = useTiltControls({
     enabled:
       round.status === 'ready' || round.status === 'playing' || round.status === 'feedback',
@@ -162,10 +157,9 @@ export default function GameScreen() {
     if (!finishSoundPlayed.current) {
       finishSoundPlayed.current = true;
       void triggerRoundHaptic('times-up', { cameraActive: isRecording });
-      recordSoundCue('round-end');
       void playSound('round-end');
     }
-  }, [isRecording, playSound, recordSoundCue, round.status]);
+  }, [isRecording, playSound, round.status]);
 
   // Recording shutdown changes isRecording. Keep navigation in its own effect so
   // that state update cannot clean up and strand this transition on Time's Up.
