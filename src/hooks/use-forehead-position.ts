@@ -2,7 +2,12 @@ import { useEffect, useState } from 'react';
 import { Platform } from 'react-native';
 import { DeviceMotion } from 'expo-sensors';
 
-import { isForeheadPosition } from '@/game/tilt-detector';
+import {
+  clearRoundTiltCalibration,
+  rememberRoundTiltCalibration,
+} from '@/game/round-tilt-calibration';
+import { isForeheadPosition, normalizePortraitCanvasTilt } from '@/game/tilt-detector';
+import { logRoundDiagnostic } from '@/video/video-diagnostics';
 
 export type ForeheadPositionStatus =
   | 'checking'
@@ -21,9 +26,14 @@ export function useForeheadPosition(enabled: boolean) {
 
     let active = true;
     let stableSamples = 0;
+    let baselineLogged = false;
+    const tiltSamples: number[] = [];
     let subscription: ReturnType<typeof DeviceMotion.addListener> | null = null;
 
     const connect = async () => {
+      // Never let a recently completed round seed a new one. This screen owns
+      // the baseline and republishes it only after the current placement check.
+      clearRoundTiltCalibration();
       setStatus('checking');
       if (Platform.OS === 'web') {
         setStatus('unavailable');
@@ -51,15 +61,35 @@ export function useForeheadPosition(enabled: boolean) {
 
       DeviceMotion.setUpdateInterval(80);
       setStatus('waiting');
+      logRoundDiagnostic('forehead motion monitoring started', {
+        requiredStableSamples: REQUIRED_STABLE_SAMPLES,
+        updateIntervalMs: 80,
+      });
       try {
         subscription = DeviceMotion.addListener((measurement) => {
           const gravity = measurement.accelerationIncludingGravity;
           const physicalOrientation = Math.abs(gravity.x) >= 6.5 ? 90 : 0;
           if (isForeheadPosition(gravity, physicalOrientation)) {
             stableSamples += 1;
-            if (stableSamples >= REQUIRED_STABLE_SAMPLES) setStatus('ready');
+            tiltSamples.push(normalizePortraitCanvasTilt(measurement.rotation.gamma));
+            if (tiltSamples.length > REQUIRED_STABLE_SAMPLES) tiltSamples.shift();
+            if (stableSamples >= REQUIRED_STABLE_SAMPLES) {
+              const baseline =
+                tiltSamples.reduce((total, angle) => total + angle, 0) / tiltSamples.length;
+              rememberRoundTiltCalibration(baseline);
+              setStatus('ready');
+              if (!baselineLogged) {
+                baselineLogged = true;
+                logRoundDiagnostic('forehead tilt baseline captured for game', {
+                  baseline,
+                  stableSamples,
+                });
+              }
+            }
           } else {
             stableSamples = 0;
+            tiltSamples.length = 0;
+            clearRoundTiltCalibration();
             setStatus((current) => (current === 'ready' ? current : 'waiting'));
           }
         });

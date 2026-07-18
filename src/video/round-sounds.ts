@@ -100,6 +100,7 @@ const soundUriPromises = new Map<RoundSoundId, Promise<string>>();
 const playbackListeners = new Set<RoundSoundPlaybackListener>();
 let nextPlaybackRequestId = 1;
 let recordingCuePlaybackActive = false;
+let microphoneCaptureActive = false;
 
 // Begin decoder/buffer preparation as soon as the bundle loads.
 for (const [sound, source] of Object.entries(ROUND_SOUND_SOURCES)) {
@@ -123,16 +124,22 @@ export function subscribeToRoundSoundPlayback(listener: RoundSoundPlaybackListen
   };
 }
 
-export function setRecordingCuePlaybackActive(active: boolean) {
+export function setRecordingCuePlaybackActive(active: boolean, captureActive = active) {
   recordingCuePlaybackActive = active;
+  microphoneCaptureActive = captureActive;
   logRoundDiagnostic('recording-engine round cue playback state changed', {
     active,
+    microphoneCaptureActive,
     platform: Platform.OS,
   });
 }
 
 export function isRecordingCuePlaybackActive() {
   return Platform.OS === 'ios' && recordingCuePlaybackActive;
+}
+
+function isMicrophoneCaptureActive() {
+  return Platform.OS === 'ios' && microphoneCaptureActive;
 }
 
 export async function resolveRoundRecordingSoundSources() {
@@ -180,15 +187,19 @@ export async function playRoundSound(player: AudioPlayer, sound: RoundSoundId) {
   logRoundDiagnostic('audio cue requested', {
     requestId,
     sound,
-    playbackPath: isRecordingCuePlaybackActive() ? 'recording-audio-engine' : 'expo-audio',
+    playbackPath: isRecordingCuePlaybackActive()
+      ? 'recording-audio-engine'
+      : isMicrophoneCaptureActive()
+        ? 'expo-audio-recorder-fallback'
+        : 'expo-audio',
     ignoresSilentSwitch: true,
     playerDuration: player.duration,
     playerIsLoaded: player.isLoaded,
   });
 
-  // Feed live cues through the same unprocessed recording engine as the mic.
-  // A successful cue is already captured acoustically, so export must not add
-  // a second clean copy. If native playback fails, export inserts the cue once.
+  // Prefer the native player when its recording graph is actually available.
+  // If an individual native request fails, continue into the already-loaded
+  // Expo player rather than turning a recoverable cue failure into silence.
   if (isRecordingCuePlaybackActive()) {
     const volumeState = getRoundLivePlayerVolume(sound);
     try {
@@ -212,50 +223,32 @@ export async function playRoundSound(player: AudioPlayer, sound: RoundSoundId) {
         });
         return true;
       }
-      emitPlaybackEvent({
-        phase: 'resolved',
-        requestId,
-        requestedAt,
-        sound,
-        includeInExport: true,
-        wasAudible: false,
-      });
-      warnVideoDiagnostic('recording audio engine cue unavailable; Expo fallback disabled', undefined, {
-        includeInExport: true,
+      warnVideoDiagnostic('recording audio engine cue unavailable; trying Expo fallback', undefined, {
         nativePlaybackStatus: getRecordingRoundSoundPlaybackStatus(sound),
         requestId,
         sound,
       });
-      return false;
     } catch (error) {
-      emitPlaybackEvent({
-        phase: 'resolved',
-        requestId,
-        requestedAt,
-        sound,
-        includeInExport: true,
-        wasAudible: false,
-      });
-      warnVideoDiagnostic('recording audio engine cue failed; Expo fallback disabled', error, {
-        includeInExport: true,
+      warnVideoDiagnostic('recording audio engine cue failed; trying Expo fallback', error, {
         nativePlaybackStatus: getRecordingRoundSoundPlaybackStatus(sound),
         requestId,
         sound,
       });
-      return false;
     }
   }
 
   if (!player.isLoaded) {
+    const includeInExport = isMicrophoneCaptureActive();
     emitPlaybackEvent({
       phase: 'resolved',
       requestId,
       requestedAt,
       sound,
-      includeInExport: false,
+      includeInExport,
       wasAudible: false,
     });
     warnVideoDiagnostic('round cue skipped because its player is not loaded', undefined, {
+      includeInExport,
       requestId,
       sound,
     });
@@ -267,27 +260,33 @@ export async function playRoundSound(player: AudioPlayer, sound: RoundSoundId) {
     if (player.playing) player.pause();
     if (player.currentTime > 0.005) await player.seekTo(0);
     if (!player.isLoaded) {
+      const includeInExport = isMicrophoneCaptureActive();
       emitPlaybackEvent({
         phase: 'resolved',
         requestId,
         requestedAt,
         sound,
-        includeInExport: false,
+        includeInExport,
         wasAudible: false,
       });
       return false;
     }
     player.volume = volumeState.playerVolume;
     player.play();
+    // The unprocessed iOS microphone naturally captures a live speaker cue.
+    // Do not add a second clean copy in export. If there is no independent iOS
+    // microphone track, retain the existing post-mix behavior.
+    const includeInExport = !isMicrophoneCaptureActive();
     emitPlaybackEvent({
       phase: 'resolved',
       requestId,
       requestedAt,
       sound,
-      includeInExport: true,
+      includeInExport,
       wasAudible: true,
     });
     logVideoDiagnostic('Expo round cue started', {
+      includeInExport,
       requestId,
       sound,
       ...volumeState,
@@ -295,15 +294,20 @@ export async function playRoundSound(player: AudioPlayer, sound: RoundSoundId) {
     });
     return true;
   } catch (error) {
+    const includeInExport = isMicrophoneCaptureActive();
     emitPlaybackEvent({
       phase: 'resolved',
       requestId,
       requestedAt,
       sound,
-      includeInExport: false,
+      includeInExport,
       wasAudible: false,
     });
-    warnVideoDiagnostic('round cue playback failed', error, { requestId, sound });
+    warnVideoDiagnostic('round cue playback failed', error, {
+      includeInExport,
+      requestId,
+      sound,
+    });
     return false;
   }
 }

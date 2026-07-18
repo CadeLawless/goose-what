@@ -202,10 +202,17 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
                 const recordingCuePlaybackStatus = recordingCuePlaybackSupported
                   ? getRecordingRoundSoundPlaybackStatus('get-ready')
                   : 'unsupported';
-                setRecordingCuePlaybackActive(recordingCuePlaybackSupported);
+                const recordingCuePlaybackActive =
+                  recordingCuePlaybackSupported && recordingCuePlaybackStatus === 'ready';
+                // A successful microphone start and a usable native cue graph
+                // are separate capabilities. The recorder fallback still gives
+                // us clean, unprocessed microphone audio, but live cues must use
+                // Expo Audio when the native graph is unavailable.
+                setRecordingCuePlaybackActive(recordingCuePlaybackActive, true);
                 logVideoDiagnostic('microphone recording started', {
                   capturePath: getMicrophoneCapturePath(),
                   offsetMs: microphoneRef.current.offsetMs,
+                  recordingCuePlaybackActive,
                   recordingCuePlaybackSupported,
                   recordingCuePlaybackStatus,
                   recordingHapticsEnabled,

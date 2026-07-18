@@ -51,12 +51,12 @@ export const DEFAULT_TILT_CONFIG: TiltDetectorConfig = {
   baselineAdjustmentFactor: 0.015,
 };
 
-export function createTiltDetectorState(): TiltDetectorState {
+export function createTiltDetectorState(baseline: number | null = null): TiltDetectorState {
   return {
-    baseline: null,
-    rawAngle: null,
-    unwrappedAngle: null,
-    filteredAngle: null,
+    baseline,
+    rawAngle: baseline,
+    unwrappedAngle: baseline,
+    filteredAngle: baseline,
     calibrationTotal: 0,
     calibrationCount: 0,
     armed: true,
