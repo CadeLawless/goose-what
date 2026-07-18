@@ -7,9 +7,30 @@ import Metal
 import NitroModules
 import VisionCamera
 
-final class HybridLiveOverlayOutput: NSObject, HybridCameraOutputSpec, NativeCameraOutput,
+private final class LiveOverlaySampleBufferDelegate: NSObject,
   AVCaptureVideoDataOutputSampleBufferDelegate
 {
+  var onFrame: ((CMSampleBuffer) -> Void)?
+  var onFrameDropped: (() -> Void)?
+
+  func captureOutput(
+    _ output: AVCaptureOutput,
+    didOutput sampleBuffer: CMSampleBuffer,
+    from connection: AVCaptureConnection
+  ) {
+    onFrame?(sampleBuffer)
+  }
+
+  func captureOutput(
+    _ output: AVCaptureOutput,
+    didDrop sampleBuffer: CMSampleBuffer,
+    from connection: AVCaptureConnection
+  ) {
+    onFrameDropped?()
+  }
+}
+
+final class HybridLiveOverlayOutput: HybridCameraOutputSpec, NativeCameraOutput {
   let mediaType: MediaType = .video
   let output = AVCaptureVideoDataOutput()
   let requiresAudioInput = false
@@ -22,6 +43,7 @@ final class HybridLiveOverlayOutput: NSObject, HybridCameraOutputSpec, NativeCam
     qos: .userInteractive,
     autoreleaseFrequency: .workItem
   )
+  private let sampleBufferDelegate = LiveOverlaySampleBufferDelegate()
   private let ciContext = HybridLiveOverlayOutput.makeCIContext()
   private let stateLock = NSLock()
   private var recordingRequested = false
@@ -55,7 +77,14 @@ final class HybridLiveOverlayOutput: NSObject, HybridCameraOutputSpec, NativeCam
 
   override init() {
     super.init()
-    output.setSampleBufferDelegate(self, queue: queue)
+    sampleBufferDelegate.onFrame = { [weak self] sampleBuffer in
+      self?.process(sampleBuffer: sampleBuffer)
+    }
+    sampleBufferDelegate.onFrameDropped = { [weak self] in
+      guard let self, self.isRecording else { return }
+      self.droppedFrameCount += 1
+    }
+    output.setSampleBufferDelegate(sampleBufferDelegate, queue: queue)
     output.videoSettings = [
       kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
     ]
@@ -182,11 +211,7 @@ final class HybridLiveOverlayOutput: NSObject, HybridCameraOutputSpec, NativeCam
     }
   }
 
-  func captureOutput(
-    _ output: AVCaptureOutput,
-    didOutput sampleBuffer: CMSampleBuffer,
-    from connection: AVCaptureConnection
-  ) {
+  private func process(sampleBuffer: CMSampleBuffer) {
     guard isRecording, let sourcePixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
       return
     }
@@ -261,14 +286,6 @@ final class HybridLiveOverlayOutput: NSObject, HybridCameraOutputSpec, NativeCam
       writer?.cancelWriting()
       setRecordingRequested(false)
     }
-  }
-
-  func captureOutput(
-    _ output: AVCaptureOutput,
-    didDrop sampleBuffer: CMSampleBuffer,
-    from connection: AVCaptureConnection
-  ) {
-    if isRecording { droppedFrameCount += 1 }
   }
 
   private func initializeWriter(pixelBuffer: CVPixelBuffer, timestamp: CMTime) throws {
