@@ -16,6 +16,8 @@ import {
 
 import { logVideoDiagnostic, warnVideoDiagnostic } from '@/video/video-diagnostics';
 
+const ROUND_VIDEO_TARGET_BIT_RATE = 5_000_000;
+
 export type RoundCameraRef = {
   startRecording: (maxDuration: number) => Promise<number | null>;
   stopRecording: () => Promise<RoundCapture | null>;
@@ -80,6 +82,10 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
       // The saved round is rendered at 720p. Capturing at the same resolution
       // avoids making the exporter decode and scale 1080p frames first.
       targetResolution: CommonResolutions.HD_16_9,
+      // The device was producing roughly 29 Mbps source files at 720p.
+      // Five Mbps keeps the same resolution/frame rate while reducing the
+      // decoder I/O required by the existing post-round overlay exporter.
+      targetBitRate: ROUND_VIDEO_TARGET_BIT_RATE,
       // iOS microphone audio is recorded independently by expo-audio.
       // This avoids VisionCamera's intermittently missing iOS audio track.
       enableAudio: microphoneEnabled && Platform.OS !== 'ios',
@@ -134,6 +140,7 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
           let recorder: Recorder | null = null;
           try {
             logVideoDiagnostic('recording start requested', {
+              captureTargetBitRate: ROUND_VIDEO_TARGET_BIT_RATE,
               microphoneEnabled,
               platform: Platform.OS,
             });
