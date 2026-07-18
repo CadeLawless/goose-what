@@ -30,6 +30,7 @@ import {
 } from '@/video/round-camera';
 import {
   deleteRoundVideo,
+  prepareLiveOverlayVideoExport,
   prepareRoundVideoExport,
   storeRoundVideo,
   type RoundVideo,
@@ -410,7 +411,11 @@ export function RoundProvider({ children }: PropsWithChildren) {
         });
 
         segments.forEach(({ capture }) => {
-          temporaryUris.push(capture.videoUri, capture.microphoneUri);
+          temporaryUris.push(
+            capture.videoUri,
+            capture.microphoneUri,
+            capture.liveOverlay?.uri,
+          );
         });
         // Match the known-good Wednesday behavior: the microphone naturally
         // captures the audible game sounds, so use it directly and never mix
@@ -422,7 +427,6 @@ export function RoundProvider({ children }: PropsWithChildren) {
 
         let videoUri = preparedSegments[0].videoUri;
         let audioUri = preparedSegments[0].audioUri ?? undefined;
-        let readyExportUri: string | undefined;
         const allSegmentsHaveLiveOverlays = segments.every(
           ({ capture }) => !!capture.liveOverlay,
         );
@@ -443,37 +447,12 @@ export function RoundProvider({ children }: PropsWithChildren) {
             finalizationId,
             videoUri,
           });
-          if (allSegmentsHaveLiveOverlays) {
-            readyExportUri = videoUri;
-          }
         } else if (segments[0].capture.liveOverlay) {
           const liveOverlay = segments[0].capture.liveOverlay;
           logVideoDiagnostic('live overlay capture completed', {
             ...liveOverlay,
             finalizationId,
           });
-          if (audioUri) {
-            const { muxLiveOverlayVideo, supportsLiveOverlayMux } = await import(
-              'whatz-it-video-export'
-            );
-            if (!supportsLiveOverlayMux()) {
-              throw new Error('The installed native exporter does not support live-overlay muxing.');
-            }
-            const muxStartedAt = Date.now();
-            readyExportUri = await muxLiveOverlayVideo(
-              liveOverlay.uri,
-              audioUri,
-              segments[0].capture.microphoneOffsetMs,
-            );
-            temporaryUris.push(readyExportUri);
-            logVideoDiagnostic('live overlay fast audio mux completed', {
-              elapsedMs: Date.now() - muxStartedAt,
-              finalizationId,
-              readyExportUri,
-            });
-          } else {
-            readyExportUri = liveOverlay.uri;
-          }
         }
 
         let offsetMs = 0;
@@ -503,7 +482,8 @@ export function RoundProvider({ children }: PropsWithChildren) {
           deckId,
           events,
           finalizationId,
-          readyExportUri,
+          undefined,
+          false,
           allSegmentsHaveLiveOverlays,
         );
         setCurrentVideo(video);
@@ -514,12 +494,31 @@ export function RoundProvider({ children }: PropsWithChildren) {
           totalElapsedMs: Date.now() - finalizationStartedAt,
           videoId: video.id,
         });
-        if (video.exportStatus === 'ready') {
-          logVideoDiagnostic('round video ready immediately from live overlay capture', {
+        if (allSegmentsHaveLiveOverlays) {
+          logVideoDiagnostic('round video live branded export dispatched', {
             finalizationId,
-            totalElapsedMs: Date.now() - finalizationStartedAt,
             videoId: video.id,
           });
+          const preparedVideo = await prepareLiveOverlayVideoExport(
+            video,
+            segments.map(({ capture }) => ({
+              videoUri: capture.liveOverlay!.uri,
+              audioUri:
+                segments.length === 1
+                  ? video.audioUri ?? null
+                  : capture.microphoneUri ?? null,
+              microphoneOffsetMs: capture.microphoneOffsetMs,
+            })),
+          );
+          logVideoDiagnostic('round video live branded export returned to context', {
+            exportStatus: preparedVideo.exportStatus,
+            finalizationId,
+            totalElapsedMs: Date.now() - finalizationStartedAt,
+            videoId: preparedVideo.id,
+          });
+          setCurrentVideo((activeVideo) =>
+            activeVideo?.id === preparedVideo.id ? preparedVideo : activeVideo,
+          );
         } else {
           logVideoDiagnostic('round video background overlay export dispatched', {
             finalizationId,

@@ -183,7 +183,7 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
                 branding?.wordmarkUri ?? undefined,
               );
               liveOverlayActiveRef.current = true;
-              logVideoDiagnostic('single-output live overlay recorder armed', {
+              logVideoDiagnostic('dual-output live overlay recorder armed', {
                 hasHeadshot: !!branding?.headshotUri,
                 hasWordmark: !!branding?.wordmarkUri,
                 maxDuration,
@@ -335,7 +335,9 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
             }
             const liveOverlay = await liveOverlayResultPromise;
             const recorderResultStartedAt = Date.now();
-            const videoUri = liveOverlay?.uri ?? (result ? await result : undefined);
+            // The clean stream is persisted for immediate in-app playback. The
+            // branded stream stays temporary until its audio is muxed for download.
+            const videoUri = liveOverlay?.cleanUri ?? (result ? await result : undefined);
             if (!videoUri) {
               throw new Error('The video recorder stopped without producing a file.');
             }

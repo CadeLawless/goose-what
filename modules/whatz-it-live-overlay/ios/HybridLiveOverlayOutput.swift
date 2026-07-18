@@ -30,6 +30,96 @@ private final class LiveOverlaySampleBufferDelegate: NSObject,
   }
 }
 
+private final class LiveVideoWriter {
+  let writer: AVAssetWriter
+  let input: AVAssetWriterInput
+  let adaptor: AVAssetWriterInputPixelBufferAdaptor
+  let url: URL
+
+  var error: Error? { writer.error }
+  var isReadyForMoreMediaData: Bool { input.isReadyForMoreMediaData }
+  var status: AVAssetWriter.Status { writer.status }
+
+  init(prefix: String, width: Int, height: Int, startTimestamp: CMTime) throws {
+    url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("\(prefix)-\(UUID().uuidString).mp4")
+    writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+    input = AVAssetWriterInput(
+      mediaType: .video,
+      outputSettings: [
+        AVVideoCodecKey: AVVideoCodecType.h264,
+        AVVideoWidthKey: width,
+        AVVideoHeightKey: height,
+        AVVideoCompressionPropertiesKey: [
+          AVVideoAverageBitRateKey: 5_000_000,
+          AVVideoExpectedSourceFrameRateKey: 30,
+          AVVideoMaxKeyFrameIntervalKey: 60,
+          AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+          AVVideoAllowFrameReorderingKey: false,
+        ],
+      ]
+    )
+    input.expectsMediaDataInRealTime = true
+    adaptor = AVAssetWriterInputPixelBufferAdaptor(
+      assetWriterInput: input,
+      sourcePixelBufferAttributes: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey as String: width,
+        kCVPixelBufferHeightKey as String: height,
+        kCVPixelBufferIOSurfacePropertiesKey as String: [:],
+      ]
+    )
+    guard writer.canAdd(input) else {
+      throw Self.makeError("The \(prefix) video track could not be added.")
+    }
+    writer.add(input)
+    guard writer.startWriting() else {
+      throw writer.error ?? Self.makeError("The \(prefix) writer could not start.")
+    }
+    writer.startSession(atSourceTime: startTimestamp)
+  }
+
+  func append(
+    image: CIImage,
+    context: CIContext,
+    size: CGSize,
+    timestamp: CMTime
+  ) throws -> Bool {
+    guard let pool = adaptor.pixelBufferPool else {
+      throw Self.makeError("The video pixel buffer pool was unavailable.")
+    }
+    var pixelBuffer: CVPixelBuffer?
+    let status = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pixelBuffer)
+    guard status == kCVReturnSuccess, let pixelBuffer else { return false }
+    context.render(
+      image,
+      to: pixelBuffer,
+      bounds: CGRect(origin: .zero, size: size),
+      colorSpace: CGColorSpaceCreateDeviceRGB()
+    )
+    return adaptor.append(pixelBuffer, withPresentationTime: timestamp)
+  }
+
+  func finish(at timestamp: CMTime, completion: @escaping () -> Void) {
+    input.markAsFinished()
+    writer.endSession(atSourceTime: timestamp)
+    writer.finishWriting(completionHandler: completion)
+  }
+
+  func cancel() {
+    input.markAsFinished()
+    writer.cancelWriting()
+  }
+
+  private static func makeError(_ message: String) -> Error {
+    NSError(
+      domain: "WhatzItLiveOverlay",
+      code: 1,
+      userInfo: [NSLocalizedDescriptionKey: message]
+    )
+  }
+}
+
 final class HybridLiveOverlayOutput: HybridCameraOutputSpec, NativeCameraOutput {
   let mediaType: MediaType = .video
   let output = AVCaptureVideoDataOutput()
@@ -47,15 +137,14 @@ final class HybridLiveOverlayOutput: HybridCameraOutputSpec, NativeCameraOutput 
   private let ciContext = HybridLiveOverlayOutput.makeCIContext()
   private let stateLock = NSLock()
   private var recordingRequested = false
-  private var writer: AVAssetWriter?
-  private var writerInput: AVAssetWriterInput?
-  private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
-  private var outputURL: URL?
+  private var cleanVideoWriter: LiveVideoWriter?
+  private var brandedVideoWriter: LiveVideoWriter?
   private var renderer: LiveOverlayRenderer?
   private var events: [NativeLiveOverlayEvent] = []
   private var firstTimestamp: CMTime?
   private var lastTimestamp: CMTime?
-  private var encodedFrameCount = 0
+  private var cleanEncodedFrameCount = 0
+  private var brandedEncodedFrameCount = 0
   private var droppedFrameCount = 0
   private var outputWidth = 0
   private var outputHeight = 0
@@ -140,7 +229,8 @@ final class HybridLiveOverlayOutput: HybridCameraOutputSpec, NativeCameraOutput 
     guard clearRecordingRequestedIfActive() else {
       let promise = Promise<LiveOverlayRecordingResult>()
       queue.async {
-        let error = self.writer?.error
+        let error = self.brandedVideoWriter?.error
+          ?? self.cleanVideoWriter?.error
           ?? self.makeError("The live-overlay recording stopped after a frame-processing failure.")
         self.resetRecordingState(deleteOutput: true)
         promise.reject(withError: error)
@@ -150,52 +240,59 @@ final class HybridLiveOverlayOutput: HybridCameraOutputSpec, NativeCameraOutput 
     let promise = Promise<LiveOverlayRecordingResult>()
     queue.async {
       guard
-        let writer = self.writer,
-        let writerInput = self.writerInput,
-        let outputURL = self.outputURL,
+        let cleanVideoWriter = self.cleanVideoWriter,
+        let brandedVideoWriter = self.brandedVideoWriter,
         let firstTimestamp = self.firstTimestamp,
         let lastTimestamp = self.lastTimestamp,
-        self.encodedFrameCount > 0
+        self.cleanEncodedFrameCount > 0,
+        self.brandedEncodedFrameCount > 0
       else {
         self.resetRecordingState(deleteOutput: true)
         promise.reject(withError: self.makeError("The live-overlay recorder received no frames."))
         return
       }
 
-      writerInput.markAsFinished()
-      writer.endSession(atSourceTime: lastTimestamp)
       let durationMs = max(0, CMTimeGetSeconds(lastTimestamp - firstTimestamp) * 1_000)
-      let encodedFrameCount = self.encodedFrameCount
+      let cleanEncodedFrameCount = self.cleanEncodedFrameCount
+      let brandedEncodedFrameCount = self.brandedEncodedFrameCount
       let droppedFrameCount = self.droppedFrameCount
       let width = self.outputWidth
       let height = self.outputHeight
-      writer.finishWriting {
-        self.queue.async {
-          if writer.status == .completed {
-            let result = LiveOverlayRecordingResult(
-              uri: outputURL.absoluteString,
-              durationMs: durationMs,
-              encodedFrameCount: Double(encodedFrameCount),
-              droppedFrameCount: Double(droppedFrameCount),
-              width: Double(width),
-              height: Double(height)
-            )
-            self.resetRecordingState(deleteOutput: false)
-            NSLog(
-              "[RoundVideoNative] Live overlay recorder completed durationMs=%.0f encodedFrames=%ld droppedFrames=%ld width=%ld height=%ld output=%@",
-              durationMs,
-              encodedFrameCount,
-              droppedFrameCount,
-              width,
-              height,
-              outputURL.lastPathComponent
-            )
-            promise.resolve(withResult: result)
-          } else {
-            let error = writer.error ?? self.makeError("The live-overlay writer did not finish.")
-            self.resetRecordingState(deleteOutput: true)
-            promise.reject(withError: error)
-          }
+      let finishGroup = DispatchGroup()
+      finishGroup.enter()
+      cleanVideoWriter.finish(at: lastTimestamp) { finishGroup.leave() }
+      finishGroup.enter()
+      brandedVideoWriter.finish(at: lastTimestamp) { finishGroup.leave() }
+      finishGroup.notify(queue: self.queue) {
+        if cleanVideoWriter.status == .completed && brandedVideoWriter.status == .completed {
+          let result = LiveOverlayRecordingResult(
+            cleanUri: cleanVideoWriter.url.absoluteString,
+            uri: brandedVideoWriter.url.absoluteString,
+            durationMs: durationMs,
+            encodedFrameCount: Double(brandedEncodedFrameCount),
+            droppedFrameCount: Double(droppedFrameCount),
+            width: Double(width),
+            height: Double(height)
+          )
+          self.resetRecordingState(deleteOutput: false)
+          NSLog(
+            "[RoundVideoNative] Dual live recorder completed durationMs=%.0f cleanFrames=%ld brandedFrames=%ld droppedFrames=%ld width=%ld height=%ld clean=%@ branded=%@",
+            durationMs,
+            cleanEncodedFrameCount,
+            brandedEncodedFrameCount,
+            droppedFrameCount,
+            width,
+            height,
+            cleanVideoWriter.url.lastPathComponent,
+            brandedVideoWriter.url.lastPathComponent
+          )
+          promise.resolve(withResult: result)
+        } else {
+          let error = brandedVideoWriter.error
+            ?? cleanVideoWriter.error
+            ?? self.makeError("The dual live-overlay writers did not finish.")
+          self.resetRecordingState(deleteOutput: true)
+          promise.reject(withError: error)
         }
       }
     }
@@ -205,8 +302,8 @@ final class HybridLiveOverlayOutput: HybridCameraOutputSpec, NativeCameraOutput 
   func cancelRecording() throws -> Promise<Void> {
     setRecordingRequested(false)
     return Promise.parallel(queue) {
-      self.writerInput?.markAsFinished()
-      self.writer?.cancelWriting()
+      self.cleanVideoWriter?.cancel()
+      self.brandedVideoWriter?.cancel()
       self.resetRecordingState(deleteOutput: true)
     }
   }
@@ -217,28 +314,22 @@ final class HybridLiveOverlayOutput: HybridCameraOutputSpec, NativeCameraOutput 
     }
     let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
     do {
-      if writer == nil {
-        try initializeWriter(pixelBuffer: sourcePixelBuffer, timestamp: timestamp)
+      if cleanVideoWriter == nil || brandedVideoWriter == nil {
+        try initializeWriters(pixelBuffer: sourcePixelBuffer, timestamp: timestamp)
       }
       guard
-        let writer,
-        let writerInput,
-        let adaptor = pixelBufferAdaptor,
-        writer.status == .writing
+        let cleanVideoWriter,
+        let brandedVideoWriter,
+        cleanVideoWriter.status == .writing,
+        brandedVideoWriter.status == .writing
       else {
         droppedFrameCount += 1
         return
       }
-      guard writerInput.isReadyForMoreMediaData else {
-        droppedFrameCount += 1
-        return
-      }
-      guard let pool = adaptor.pixelBufferPool else {
-        throw makeError("The live-overlay pixel buffer pool was unavailable.")
-      }
-      var destinationPixelBuffer: CVPixelBuffer?
-      let status = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &destinationPixelBuffer)
-      guard status == kCVReturnSuccess, let destinationPixelBuffer else {
+      guard
+        cleanVideoWriter.isReadyForMoreMediaData,
+        brandedVideoWriter.isReadyForMoreMediaData
+      else {
         droppedFrameCount += 1
         return
       }
@@ -265,30 +356,40 @@ final class HybridLiveOverlayOutput: HybridCameraOutputSpec, NativeCameraOutput 
             y: -cropRect.minY
           ))
       }
-      if let overlay = renderer?.image(event: event, elapsedMs: elapsedMs, size: size) {
-        image = overlay.composited(over: image)
-      }
-      ciContext.render(
-        image,
-        to: destinationPixelBuffer,
-        bounds: CGRect(origin: .zero, size: size),
-        colorSpace: CGColorSpaceCreateDeviceRGB()
+      let cleanAppended = try cleanVideoWriter.append(
+        image: image,
+        context: ciContext,
+        size: size,
+        timestamp: timestamp
       )
-      if adaptor.append(destinationPixelBuffer, withPresentationTime: timestamp) {
-        encodedFrameCount += 1
+      var brandedImage = image
+      if let overlay = renderer?.image(event: event, elapsedMs: elapsedMs, size: size) {
+        brandedImage = overlay.composited(over: brandedImage)
+      }
+      let brandedAppended = try brandedVideoWriter.append(
+        image: brandedImage,
+        context: ciContext,
+        size: size,
+        timestamp: timestamp
+      )
+      if cleanAppended { cleanEncodedFrameCount += 1 }
+      if brandedAppended { brandedEncodedFrameCount += 1 }
+      if cleanAppended || brandedAppended {
         lastTimestamp = timestamp
-      } else {
+      }
+      if !cleanAppended || !brandedAppended {
         droppedFrameCount += 1
       }
     } catch {
       droppedFrameCount += 1
       NSLog("[RoundVideoNative] Live overlay frame processing failed error=%@", error.localizedDescription)
-      writer?.cancelWriting()
+      cleanVideoWriter?.cancel()
+      brandedVideoWriter?.cancel()
       setRecordingRequested(false)
     }
   }
 
-  private func initializeWriter(pixelBuffer: CVPixelBuffer, timestamp: CMTime) throws {
+  private func initializeWriters(pixelBuffer: CVPixelBuffer, timestamp: CMTime) throws {
     switch outputOrientation {
     case .up, .down:
       outputWidth = 720
@@ -297,55 +398,37 @@ final class HybridLiveOverlayOutput: HybridCameraOutputSpec, NativeCameraOutput 
       outputWidth = 1280
       outputHeight = 720
     }
-    let url = FileManager.default.temporaryDirectory
-      .appendingPathComponent("whatz-it-live-overlay-\(UUID().uuidString).mp4")
-    let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
-    let writerInput = AVAssetWriterInput(
-      mediaType: .video,
-      outputSettings: [
-        AVVideoCodecKey: AVVideoCodecType.h264,
-        AVVideoWidthKey: outputWidth,
-        AVVideoHeightKey: outputHeight,
-        AVVideoCompressionPropertiesKey: [
-          AVVideoAverageBitRateKey: 5_000_000,
-          AVVideoExpectedSourceFrameRateKey: 30,
-          AVVideoMaxKeyFrameIntervalKey: 60,
-          AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
-          AVVideoAllowFrameReorderingKey: false,
-        ],
-      ]
+    let cleanVideoWriter = try LiveVideoWriter(
+      prefix: "whatz-it-live-clean",
+      width: outputWidth,
+      height: outputHeight,
+      startTimestamp: timestamp
     )
-    writerInput.expectsMediaDataInRealTime = true
-    let adaptor = AVAssetWriterInputPixelBufferAdaptor(
-      assetWriterInput: writerInput,
-      sourcePixelBufferAttributes: [
-        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-        kCVPixelBufferWidthKey as String: outputWidth,
-        kCVPixelBufferHeightKey as String: outputHeight,
-        kCVPixelBufferIOSurfacePropertiesKey as String: [:],
-      ]
-    )
-    guard writer.canAdd(writerInput) else {
-      throw makeError("The live-overlay video track could not be added.")
+    let brandedVideoWriter: LiveVideoWriter
+    do {
+      brandedVideoWriter = try LiveVideoWriter(
+        prefix: "whatz-it-live-branded",
+        width: outputWidth,
+        height: outputHeight,
+        startTimestamp: timestamp
+      )
+    } catch {
+      cleanVideoWriter.cancel()
+      try? FileManager.default.removeItem(at: cleanVideoWriter.url)
+      throw error
     }
-    writer.add(writerInput)
-    guard writer.startWriting() else {
-      throw writer.error ?? makeError("The live-overlay writer could not start.")
-    }
-    writer.startSession(atSourceTime: timestamp)
-    self.writer = writer
-    self.writerInput = writerInput
-    pixelBufferAdaptor = adaptor
-    outputURL = url
+    self.cleanVideoWriter = cleanVideoWriter
+    self.brandedVideoWriter = brandedVideoWriter
     firstTimestamp = timestamp
     lastTimestamp = timestamp
     NSLog(
-      "[RoundVideoNative] Live overlay writer started width=%ld height=%ld sourceWidth=%ld sourceHeight=%ld output=%@",
+      "[RoundVideoNative] Dual live writers started width=%ld height=%ld sourceWidth=%ld sourceHeight=%ld clean=%@ branded=%@",
       outputWidth,
       outputHeight,
       CVPixelBufferGetWidth(pixelBuffer),
       CVPixelBufferGetHeight(pixelBuffer),
-      url.lastPathComponent
+      cleanVideoWriter.url.lastPathComponent,
+      brandedVideoWriter.url.lastPathComponent
     )
   }
 
@@ -386,18 +469,22 @@ final class HybridLiveOverlayOutput: HybridCameraOutputSpec, NativeCameraOutput 
   }
 
   private func resetRecordingState(deleteOutput: Bool) {
-    if deleteOutput, let outputURL {
-      try? FileManager.default.removeItem(at: outputURL)
+    if deleteOutput {
+      if let cleanVideoWriter {
+        try? FileManager.default.removeItem(at: cleanVideoWriter.url)
+      }
+      if let brandedVideoWriter {
+        try? FileManager.default.removeItem(at: brandedVideoWriter.url)
+      }
     }
-    writer = nil
-    writerInput = nil
-    pixelBufferAdaptor = nil
-    outputURL = nil
+    cleanVideoWriter = nil
+    brandedVideoWriter = nil
     renderer = nil
     events = []
     firstTimestamp = nil
     lastTimestamp = nil
-    encodedFrameCount = 0
+    cleanEncodedFrameCount = 0
+    brandedEncodedFrameCount = 0
     droppedFrameCount = 0
     outputWidth = 0
     outputHeight = 0

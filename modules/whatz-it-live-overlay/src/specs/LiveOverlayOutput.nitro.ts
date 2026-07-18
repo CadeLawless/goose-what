@@ -10,6 +10,7 @@ export type LiveOverlayEvent = {
 };
 
 export type LiveOverlayRecordingResult = {
+  cleanUri: string;
   uri: string;
   durationMs: number;
   encodedFrameCount: number;

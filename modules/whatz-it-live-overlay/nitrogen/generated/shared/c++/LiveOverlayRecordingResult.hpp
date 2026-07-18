@@ -39,6 +39,7 @@ namespace margelo::nitro::whatzit::liveoverlay {
    */
   struct LiveOverlayRecordingResult final {
   public:
+    std::string cleanUri     SWIFT_PRIVATE;
     std::string uri     SWIFT_PRIVATE;
     double durationMs     SWIFT_PRIVATE;
     double encodedFrameCount     SWIFT_PRIVATE;
@@ -48,7 +49,7 @@ namespace margelo::nitro::whatzit::liveoverlay {
 
   public:
     LiveOverlayRecordingResult() = default;
-    explicit LiveOverlayRecordingResult(std::string uri, double durationMs, double encodedFrameCount, double droppedFrameCount, double width, double height): uri(uri), durationMs(durationMs), encodedFrameCount(encodedFrameCount), droppedFrameCount(droppedFrameCount), width(width), height(height) {}
+    explicit LiveOverlayRecordingResult(std::string cleanUri, std::string uri, double durationMs, double encodedFrameCount, double droppedFrameCount, double width, double height): cleanUri(cleanUri), uri(uri), durationMs(durationMs), encodedFrameCount(encodedFrameCount), droppedFrameCount(droppedFrameCount), width(width), height(height) {}
 
   public:
     friend bool operator==(const LiveOverlayRecordingResult& lhs, const LiveOverlayRecordingResult& rhs) = default;
@@ -64,6 +65,7 @@ namespace margelo::nitro {
     static inline margelo::nitro::whatzit::liveoverlay::LiveOverlayRecordingResult fromJSI(jsi::Runtime& runtime, const jsi::Value& arg) {
       jsi::Object obj = arg.asObject(runtime);
       return margelo::nitro::whatzit::liveoverlay::LiveOverlayRecordingResult(
+        JSIConverter<std::string>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "cleanUri"))),
         JSIConverter<std::string>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uri"))),
         JSIConverter<double>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "durationMs"))),
         JSIConverter<double>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "encodedFrameCount"))),
@@ -74,6 +76,7 @@ namespace margelo::nitro {
     }
     static inline jsi::Value toJSI(jsi::Runtime& runtime, const margelo::nitro::whatzit::liveoverlay::LiveOverlayRecordingResult& arg) {
       jsi::Object obj(runtime);
+      obj.setProperty(runtime, PropNameIDCache::get(runtime, "cleanUri"), JSIConverter<std::string>::toJSI(runtime, arg.cleanUri));
       obj.setProperty(runtime, PropNameIDCache::get(runtime, "uri"), JSIConverter<std::string>::toJSI(runtime, arg.uri));
       obj.setProperty(runtime, PropNameIDCache::get(runtime, "durationMs"), JSIConverter<double>::toJSI(runtime, arg.durationMs));
       obj.setProperty(runtime, PropNameIDCache::get(runtime, "encodedFrameCount"), JSIConverter<double>::toJSI(runtime, arg.encodedFrameCount));
@@ -90,6 +93,7 @@ namespace margelo::nitro {
       if (!nitro::isPlainObject(runtime, obj)) {
         return false;
       }
+      if (!JSIConverter<std::string>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "cleanUri")))) return false;
       if (!JSIConverter<std::string>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "uri")))) return false;
       if (!JSIConverter<double>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "durationMs")))) return false;
       if (!JSIConverter<double>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "encodedFrameCount")))) return false;

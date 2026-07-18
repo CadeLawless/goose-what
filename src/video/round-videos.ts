@@ -15,6 +15,7 @@ export type RoundVideo = {
   exportUri?: string;
   playbackIncludesOverlays?: boolean;
   exportIncludesOverlays?: boolean;
+  requiresBrandedExport?: boolean;
   exportStatus?: 'preparing' | 'ready' | 'failed';
   deckId: string;
   createdAt: number;
@@ -94,6 +95,7 @@ export async function loadRoundVideos() {
         new File(exportUri).delete();
         exportUri = undefined;
       }
+      const requiresExport = video.requiresBrandedExport || !!video.events?.length;
       return {
         ...video,
         audioUri,
@@ -101,7 +103,7 @@ export async function loadRoundVideos() {
         exportIncludesOverlays: exportUri ? video.exportIncludesOverlays : undefined,
         exportStatus: exportUri
           ? ('ready' as const)
-          : video.events?.length
+          : requiresExport
             ? video.exportStatus === 'failed'
               ? ('failed' as const)
               : ('preparing' as const)
@@ -127,6 +129,7 @@ export async function storeRoundVideo(
   diagnosticId?: string,
   temporaryReadyExportUri?: string,
   playbackIncludesOverlays = false,
+  requiresBrandedExport = false,
 ) {
   const persistenceStartedAt = Date.now();
   if (Platform.OS === 'web') throw new Error('Round recording is only available on a device.');
@@ -216,7 +219,8 @@ export async function storeRoundVideo(
     exportUri,
     playbackIncludesOverlays,
     exportIncludesOverlays: exportUri ? true : undefined,
-    exportStatus: exportUri || !events.length ? 'ready' : 'preparing',
+    requiresBrandedExport,
+    exportStatus: exportUri || (!requiresBrandedExport && !events.length) ? 'ready' : 'preparing',
     deckId,
     createdAt,
     events,
@@ -254,7 +258,28 @@ export async function deleteRoundVideo(id: string) {
 }
 
 export function isRoundVideoReadyToSave(video: RoundVideo) {
-  return video.events?.length ? video.exportStatus === 'ready' && !!video.exportUri : true;
+  return video.requiresBrandedExport || video.events?.length
+    ? video.exportStatus === 'ready' && !!video.exportUri
+    : true;
+}
+
+export type LiveOverlayExportSegment = {
+  videoUri: string;
+  audioUri: string | null;
+  microphoneOffsetMs: number;
+};
+
+export function prepareLiveOverlayVideoExport(
+  video: RoundVideo,
+  segments: LiveOverlayExportSegment[],
+) {
+  const existing = activeExports.get(video.id);
+  if (existing) return existing;
+  const preparing = prepareLiveOverlayVideoExportOnce(video, segments).finally(() => {
+    activeExports.delete(video.id);
+  });
+  activeExports.set(video.id, preparing);
+  return preparing;
 }
 
 export function prepareRoundVideoExport(video: RoundVideo) {
@@ -280,7 +305,7 @@ export async function saveRoundVideoToDevice(video: RoundVideo) {
   const { Asset, requestPermissionsAsync } = await import('expo-media-library');
   const permission = await requestPermissionsAsync(true, ['video']);
   if (!permission.granted) throw new Error('Media library permission was not granted.');
-  const saveUri = video.events?.length ? video.exportUri : video.uri;
+  const saveUri = video.requiresBrandedExport || video.events?.length ? video.exportUri : video.uri;
   if (!saveUri) throw new Error('This video is still being prepared.');
   const { File } = await import('expo-file-system');
   const saveFile = new File(saveUri);
@@ -315,11 +340,104 @@ export async function saveRoundVideoToDevice(video: RoundVideo) {
   logVideoDiagnostic('media library save completed', { saveUri });
 }
 
+async function prepareLiveOverlayVideoExportOnce(
+  video: RoundVideo,
+  segments: LiveOverlayExportSegment[],
+): Promise<RoundVideo> {
+  const exportStartedAt = Date.now();
+  const { Directory, File, Paths } = await import('expo-file-system');
+  if (segments.length === 0) {
+    return updateStoredVideo({
+      ...video,
+      exportUri: undefined,
+      exportIncludesOverlays: undefined,
+      exportStatus: 'failed',
+    });
+  }
+  await updateStoredVideo({
+    ...video,
+    exportUri: undefined,
+    exportIncludesOverlays: undefined,
+    exportStatus: 'preparing',
+  });
+  let temporaryExportUri: string | undefined;
+  try {
+    const { muxLiveOverlayVideo, stitchRoundVideoSegments, supportsLiveOverlayMux } =
+      await import('whatz-it-video-export');
+    logVideoDiagnostic('live branded export preparing', {
+      hasAudio: segments.some((segment) => !!segment.audioUri),
+      segmentCount: segments.length,
+      videoId: video.id,
+    });
+    if (segments.length === 1) {
+      const [segment] = segments;
+      if (segment.audioUri) {
+        if (!supportsLiveOverlayMux()) {
+          throw new Error('The installed native exporter does not support live-overlay muxing.');
+        }
+        temporaryExportUri = await muxLiveOverlayVideo(
+          segment.videoUri,
+          segment.audioUri,
+          segment.microphoneOffsetMs,
+        );
+      } else {
+        temporaryExportUri = segment.videoUri;
+      }
+    } else {
+      temporaryExportUri = await stitchRoundVideoSegments(
+        segments.map((segment) => ({
+          videoUri: segment.videoUri,
+          audioUri: segment.audioUri,
+        })),
+      );
+    }
+
+    const videoDirectory = new Directory(Paths.document, VIDEO_DIRECTORY_NAME);
+    videoDirectory.create({ idempotent: true, intermediates: true });
+    const destination = new File(videoDirectory, `${video.id}-export.mp4`);
+    if (destination.exists) destination.delete();
+    const temporaryExport = new File(temporaryExportUri);
+    await temporaryExport.move(destination);
+    logVideoDiagnostic('live branded export ready', {
+      destinationSize: destination.size,
+      destinationUri: destination.uri,
+      elapsedMs: Date.now() - exportStartedAt,
+      segmentCount: segments.length,
+      videoId: video.id,
+    });
+    return updateStoredVideo({
+      ...video,
+      exportUri: destination.uri,
+      exportIncludesOverlays: true,
+      exportStatus: 'ready',
+    });
+  } catch (error) {
+    warnVideoDiagnostic('live branded export failed', error, {
+      elapsedMs: Date.now() - exportStartedAt,
+      segmentCount: segments.length,
+      temporaryExportUri,
+      videoId: video.id,
+    });
+    return updateStoredVideo({
+      ...video,
+      exportUri: undefined,
+      exportIncludesOverlays: undefined,
+      exportStatus: 'failed',
+    });
+  } finally {
+    if (temporaryExportUri) {
+      const temporaryFile = new File(temporaryExportUri);
+      if (temporaryFile.exists) temporaryFile.delete();
+    }
+  }
+}
+
 async function prepareRoundVideoExportOnce(video: RoundVideo): Promise<RoundVideo> {
   const exportStartedAt = Date.now();
-  if (Platform.OS === 'web' || !video.events?.length) {
+  if (Platform.OS === 'web' || (!video.requiresBrandedExport && !video.events?.length)) {
     return updateStoredVideo({ ...video, exportStatus: 'ready' });
   }
+  const events = video.events ?? [];
   const { Directory, File, Paths } = await import('expo-file-system');
   if (video.exportUri && new File(video.exportUri).exists) {
     return updateStoredVideo({ ...video, exportStatus: 'ready' });
@@ -349,7 +467,7 @@ async function prepareRoundVideoExportOnce(video: RoundVideo): Promise<RoundVide
     // prior card visible. Export clean video plus audio until the corrected native
     // exporter arrives in the eventual production build.
     const exportEvents =
-      Platform.OS === 'ios' && !supportsFixedIosOverlayExport() ? [] : video.events;
+      Platform.OS === 'ios' && !supportsFixedIosOverlayExport() ? [] : events;
     const audioFile = video.audioUri ? new File(video.audioUri) : null;
     const sourceVideoFile = new File(video.uri);
     const iosVideoExportVersion = Platform.OS === 'ios' ? getIosVideoExportVersion() : null;
@@ -361,7 +479,7 @@ async function prepareRoundVideoExportOnce(video: RoundVideo): Promise<RoundVide
       exportEventCount: exportEvents.length,
       iosVideoExportVersion,
       nativeAudioValidated,
-      sourceEventCount: video.events.length,
+      sourceEventCount: events.length,
       sourceVideoExists: sourceVideoFile.exists,
       sourceVideoSize: sourceVideoFile.size,
       sourceVideoUri: video.uri,

@@ -18,8 +18,13 @@ public extension LiveOverlayRecordingResult {
   /**
    * Create a new instance of `LiveOverlayRecordingResult`.
    */
-  init(uri: String, durationMs: Double, encodedFrameCount: Double, droppedFrameCount: Double, width: Double, height: Double) {
-    self.init(std.string(uri), durationMs, encodedFrameCount, droppedFrameCount, width, height)
+  init(cleanUri: String, uri: String, durationMs: Double, encodedFrameCount: Double, droppedFrameCount: Double, width: Double, height: Double) {
+    self.init(std.string(cleanUri), std.string(uri), durationMs, encodedFrameCount, droppedFrameCount, width, height)
+  }
+
+  @inline(__always)
+  var cleanUri: String {
+    return String(self.__cleanUri)
   }
 
   @inline(__always)
