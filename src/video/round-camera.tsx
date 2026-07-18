@@ -1,5 +1,5 @@
 import { RecordingPresets, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
-import { forwardRef, useCallback, useImperativeHandle, useRef } from 'react';
+import { forwardRef, useCallback, useImperativeHandle, useMemo, useRef } from 'react';
 import { Platform, StyleSheet } from 'react-native';
 import {
   Camera,
@@ -13,6 +13,12 @@ import {
   prepareRecordingAudio,
   reassertRecordingHaptics,
 } from 'whatz-it-video-export';
+import {
+  createLiveOverlayOutput,
+  type LiveOverlayEvent,
+  type LiveOverlayOutput,
+  type LiveOverlayRecordingResult,
+} from 'whatz-it-live-overlay';
 
 import { logVideoDiagnostic, warnVideoDiagnostic } from '@/video/video-diagnostics';
 
@@ -22,12 +28,14 @@ export type RoundCameraRef = {
   startRecording: (maxDuration: number) => Promise<number | null>;
   stopRecording: () => Promise<RoundCapture | null>;
   cancelRecording: () => Promise<void>;
+  recordOverlayEvent: (event: LiveOverlayEvent) => void;
 };
 
 export type RoundCapture = {
   videoUri: string;
   microphoneUri?: string;
   microphoneOffsetMs: number;
+  liveOverlay?: LiveOverlayRecordingResult;
 };
 
 type RoundCameraProps = {
@@ -82,19 +90,33 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
       // The saved round is rendered at 720p. Capturing at the same resolution
       // avoids making the exporter decode and scale 1080p frames first.
       targetResolution: CommonResolutions.HD_16_9,
-      // The device was producing roughly 29 Mbps source files at 720p.
-      // Five Mbps keeps the same resolution/frame rate while reducing the
-      // decoder I/O required by the existing post-round overlay exporter.
       targetBitRate: ROUND_VIDEO_TARGET_BIT_RATE,
       // iOS microphone audio is recorded independently by expo-audio.
       // This avoids VisionCamera's intermittently missing iOS audio track.
       enableAudio: microphoneEnabled && Platform.OS !== 'ios',
       fileType: 'mp4',
     });
+    const liveOverlayOutput = useMemo<LiveOverlayOutput | null>(() => {
+      if (Platform.OS !== 'ios') return null;
+      try {
+        return createLiveOverlayOutput();
+      } catch (error) {
+        warnVideoDiagnostic('live overlay output unavailable; using standard recorder', error);
+        return null;
+      }
+    }, []);
+    const cameraOutputs = useMemo(
+      // The live path replaces the normal iOS recorder. Attaching both outputs
+      // makes the camera encode two 720p streams and was the main source of
+      // stalls in the first prototype.
+      () => (liveOverlayOutput ? [liveOverlayOutput] : [videoOutput]),
+      [liveOverlayOutput, videoOutput],
+    );
     const recorderRef = useRef<Recorder | null>(null);
     const resultPromiseRef = useRef<Promise<string> | null>(null);
     const microphoneRef = useRef<{ uri: string; offsetMs: number } | null>(null);
     const microphonePreparedRef = useRef(false);
+    const liveOverlayActiveRef = useRef(false);
 
     const prepareMicrophone = useCallback(async () => {
       if (Platform.OS !== 'ios') return microphoneEnabled;
@@ -136,11 +158,12 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
       ref,
       () => ({
         async startRecording(maxDuration) {
-          if (!enabled || !device || recorderRef.current) return null;
+          if (!enabled || !device || recorderRef.current || liveOverlayActiveRef.current) return null;
           let recorder: Recorder | null = null;
           try {
             logVideoDiagnostic('recording start requested', {
               captureTargetBitRate: ROUND_VIDEO_TARGET_BIT_RATE,
+              liveOverlayEnabled: !!liveOverlayOutput,
               microphoneEnabled,
               platform: Platform.OS,
             });
@@ -153,16 +176,30 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
                 warnVideoDiagnostic('microphone setup failed; recording video without audio', error);
               }
             }
-            recorder = await videoOutput.createRecorder({ maxDuration });
-            recorderRef.current = recorder;
-            let finishRecording!: (filePath: string) => void;
-            let failRecording!: (error: Error) => void;
-            resultPromiseRef.current = new Promise<string>((resolve, reject) => {
-              finishRecording = (filePath) => resolve(toFileUri(filePath));
-              failRecording = reject;
-            });
-            void resultPromiseRef.current.catch(() => undefined);
-            await recorder.startRecording(finishRecording, failRecording);
+            if (liveOverlayOutput) {
+              const branding = await loadLiveOverlayBrandingUris();
+              await liveOverlayOutput.startRecording(
+                branding?.headshotUri ?? undefined,
+                branding?.wordmarkUri ?? undefined,
+              );
+              liveOverlayActiveRef.current = true;
+              logVideoDiagnostic('single-output live overlay recorder armed', {
+                hasHeadshot: !!branding?.headshotUri,
+                hasWordmark: !!branding?.wordmarkUri,
+                maxDuration,
+              });
+            } else {
+              recorder = await videoOutput.createRecorder({ maxDuration });
+              recorderRef.current = recorder;
+              let finishRecording!: (filePath: string) => void;
+              let failRecording!: (error: Error) => void;
+              resultPromiseRef.current = new Promise<string>((resolve, reject) => {
+                finishRecording = (filePath) => resolve(toFileUri(filePath));
+                failRecording = reject;
+              });
+              void resultPromiseRef.current.catch(() => undefined);
+              await recorder.startRecording(finishRecording, failRecording);
+            }
             const videoStartedAt = Date.now();
             if (Platform.OS === 'ios' && microphonePrepared) {
               try {
@@ -229,6 +266,13 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
             } catch {
               // The recorder may already have stopped while cleaning up a failed start.
             }
+            try {
+              if (liveOverlayActiveRef.current && liveOverlayOutput) {
+                await liveOverlayOutput.cancelRecording();
+              }
+            } catch {
+              // The experimental recorder may not have armed before the start failure.
+            }
             if (Platform.OS === 'ios' && microphoneRecorder.getStatus().isRecording) {
               try {
                 await microphoneRecorder.stop();
@@ -240,6 +284,7 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
             resultPromiseRef.current = null;
             microphoneRef.current = null;
             microphonePreparedRef.current = false;
+            liveOverlayActiveRef.current = false;
             return null;
           }
         },
@@ -247,14 +292,21 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
           const stopStartedAt = Date.now();
           const recorder = recorderRef.current;
           const result = resultPromiseRef.current;
-          if (!recorder || !result) return null;
+          const stoppingLiveOverlay = liveOverlayActiveRef.current && !!liveOverlayOutput;
+          if (!stoppingLiveOverlay && (!recorder || !result)) return null;
           try {
             logVideoDiagnostic('recording stop requested', {
+              liveOverlayActive: stoppingLiveOverlay,
               microphoneStatus: microphoneRecorder.getStatus(),
               microphoneUri: microphoneRef.current?.uri,
-              videoRecorderActive: recorder.isRecording,
+              videoRecorderActive: recorder?.isRecording ?? false,
             });
-            if (recorder.isRecording) {
+            const liveOverlayResultPromise =
+              stoppingLiveOverlay && liveOverlayOutput
+                ? liveOverlayOutput.stopRecording()
+                : Promise.resolve(undefined);
+            liveOverlayActiveRef.current = false;
+            if (recorder?.isRecording) {
               const recorderStopStartedAt = Date.now();
               await recorder.stopRecording();
               logVideoDiagnostic('native video recorder stop command completed', {
@@ -281,10 +333,15 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
                 });
               }
             }
+            const liveOverlay = await liveOverlayResultPromise;
             const recorderResultStartedAt = Date.now();
-            const videoUri = await result;
-            logVideoDiagnostic('native video recorder result received', {
+            const videoUri = liveOverlay?.uri ?? (result ? await result : undefined);
+            if (!videoUri) {
+              throw new Error('The video recorder stopped without producing a file.');
+            }
+            logVideoDiagnostic('native video result received', {
               elapsedMs: Date.now() - recorderResultStartedAt,
+              liveOverlay,
             });
             const fileInspectionStartedAt = Date.now();
             const { File } = await import('expo-file-system');
@@ -300,17 +357,20 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
               videoUri,
               fileInspectionElapsedMs: Date.now() - fileInspectionStartedAt,
               totalStopElapsedMs: Date.now() - stopStartedAt,
+              liveOverlay,
             });
             return {
               videoUri,
               microphoneUri,
               microphoneOffsetMs: microphoneRef.current?.offsetMs ?? 0,
+              liveOverlay,
             };
           } finally {
             recorderRef.current = null;
             resultPromiseRef.current = null;
             microphoneRef.current = null;
             microphonePreparedRef.current = false;
+            liveOverlayActiveRef.current = false;
           }
         },
         async cancelRecording() {
@@ -319,6 +379,13 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
             if (recorder) await recorder.cancelRecording();
           } catch {
             // Continue so the independently recorded microphone file is also removed.
+          }
+          try {
+            if (liveOverlayActiveRef.current && liveOverlayOutput) {
+              await liveOverlayOutput.cancelRecording();
+            }
+          } catch {
+            // The live output may already have stopped; microphone cleanup still continues.
           }
           try {
             if (Platform.OS === 'ios' && microphoneRecorder.getStatus().isRecording) {
@@ -337,10 +404,30 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
             resultPromiseRef.current = null;
             microphoneRef.current = null;
             microphonePreparedRef.current = false;
+            liveOverlayActiveRef.current = false;
+          }
+        },
+        recordOverlayEvent(event) {
+          if (!liveOverlayActiveRef.current || !liveOverlayOutput) return;
+          try {
+            liveOverlayOutput.appendOverlayEvent(event);
+          } catch (error) {
+            warnVideoDiagnostic('live overlay event append failed', error, {
+              atMs: event.atMs,
+              kind: event.kind,
+            });
           }
         },
       }),
-      [device, enabled, microphoneEnabled, microphoneRecorder, prepareMicrophone, videoOutput],
+      [
+        device,
+        enabled,
+        liveOverlayOutput,
+        microphoneEnabled,
+        microphoneRecorder,
+        prepareMicrophone,
+        videoOutput,
+      ],
     );
 
     if (!enabled || !device) return null;
@@ -353,10 +440,10 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
         mirrorMode="off"
         onError={onError}
         onStarted={() => {
-          // Prepare the microphone before ReadyScreen starts any countdown audio.
-          void prepareMicrophone().then(() => onReady());
+          // Prepare native resources before ReadyScreen starts any countdown audio.
+          void Promise.all([prepareMicrophone(), loadLiveOverlayBrandingUris()]).then(() => onReady());
         }}
-        outputs={[videoOutput]}
+        outputs={cameraOutputs}
         pointerEvents="none"
         resizeMode="cover"
         style={StyleSheet.absoluteFill}
@@ -367,4 +454,29 @@ export const RoundCamera = forwardRef<RoundCameraRef, RoundCameraProps>(
 
 function toFileUri(path: string) {
   return path.startsWith('file://') ? path : `file://${path}`;
+}
+
+let liveOverlayBrandingPromise: ReturnType<typeof resolveLiveOverlayBrandingUris> | null = null;
+
+function loadLiveOverlayBrandingUris() {
+  if (Platform.OS !== 'ios') return Promise.resolve(null);
+  liveOverlayBrandingPromise ??= resolveLiveOverlayBrandingUris();
+  return liveOverlayBrandingPromise;
+}
+
+async function resolveLiveOverlayBrandingUris() {
+  try {
+    const { Asset } = await import('expo-asset');
+    const [headshot, wordmark] = await Asset.loadAsync([
+      require('../../assets/images/branding/albert-headshot.png'),
+      require('../../assets/images/branding/whatz-it-wordmark.png'),
+    ]);
+    return {
+      headshotUri: headshot.localUri ?? headshot.uri,
+      wordmarkUri: wordmark.localUri ?? wordmark.uri,
+    };
+  } catch (error) {
+    warnVideoDiagnostic('live overlay branding assets unavailable', error);
+    return null;
+  }
 }

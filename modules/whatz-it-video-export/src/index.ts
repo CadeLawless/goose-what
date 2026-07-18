@@ -47,6 +47,11 @@ type WhatzItVideoExportNativeModule = {
     cueVolume: number,
   ): Promise<string>;
   stitchRoundVideoSegments?(segments: RoundVideoSegment[]): Promise<string>;
+  muxLiveOverlayVideo?(
+    videoUri: string,
+    audioUri: string | null,
+    microphoneOffsetMs: number,
+  ): Promise<string>;
   prepareRecordingAudio(): Promise<void>;
   reassertRecordingHaptics(): Promise<boolean>;
   playRoundHaptic(cue: string, countdownValue: number | null): Promise<string>;
@@ -121,6 +126,21 @@ export function stitchRoundVideoSegments(segments: RoundVideoSegment[]) {
     return Promise.reject(new Error('This app build cannot stitch interrupted round videos.'));
   }
   return nativeModule.stitchRoundVideoSegments(segments);
+}
+
+export function supportsLiveOverlayMux() {
+  return getIosVideoExportVersion() >= 25 && typeof nativeModule.muxLiveOverlayVideo === 'function';
+}
+
+export function muxLiveOverlayVideo(
+  videoUri: string,
+  audioUri: string | null,
+  microphoneOffsetMs: number,
+) {
+  if (!supportsLiveOverlayMux() || !nativeModule.muxLiveOverlayVideo) {
+    return Promise.reject(new Error('This app build cannot mux a live-overlay recording.'));
+  }
+  return nativeModule.muxLiveOverlayVideo(videoUri, audioUri, microphoneOffsetMs);
 }
 
 export function prepareRecordingAudio() {

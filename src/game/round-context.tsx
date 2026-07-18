@@ -106,7 +106,9 @@ export function RoundProvider({ children }: PropsWithChildren) {
       previous.text === event.text &&
       previous.byline === event.byline
     ) return;
-    recordingEvents.current.push({ ...event, atMs });
+    const timedEvent = { ...event, atMs };
+    recordingEvents.current.push(timedEvent);
+    cameraRef.current?.recordOverlayEvent(timedEvent);
   }, []);
 
   const getRecordingTimerEndsAtMs = useCallback((endsAt: number | null) => {
@@ -420,6 +422,10 @@ export function RoundProvider({ children }: PropsWithChildren) {
 
         let videoUri = preparedSegments[0].videoUri;
         let audioUri = preparedSegments[0].audioUri ?? undefined;
+        let readyExportUri: string | undefined;
+        const allSegmentsHaveLiveOverlays = segments.every(
+          ({ capture }) => !!capture.liveOverlay,
+        );
         if (preparedSegments.length > 1) {
           const { stitchRoundVideoSegments } = await import('whatz-it-video-export');
           const stitchStartedAt = Date.now();
@@ -437,6 +443,37 @@ export function RoundProvider({ children }: PropsWithChildren) {
             finalizationId,
             videoUri,
           });
+          if (allSegmentsHaveLiveOverlays) {
+            readyExportUri = videoUri;
+          }
+        } else if (segments[0].capture.liveOverlay) {
+          const liveOverlay = segments[0].capture.liveOverlay;
+          logVideoDiagnostic('live overlay capture completed', {
+            ...liveOverlay,
+            finalizationId,
+          });
+          if (audioUri) {
+            const { muxLiveOverlayVideo, supportsLiveOverlayMux } = await import(
+              'whatz-it-video-export'
+            );
+            if (!supportsLiveOverlayMux()) {
+              throw new Error('The installed native exporter does not support live-overlay muxing.');
+            }
+            const muxStartedAt = Date.now();
+            readyExportUri = await muxLiveOverlayVideo(
+              liveOverlay.uri,
+              audioUri,
+              segments[0].capture.microphoneOffsetMs,
+            );
+            temporaryUris.push(readyExportUri);
+            logVideoDiagnostic('live overlay fast audio mux completed', {
+              elapsedMs: Date.now() - muxStartedAt,
+              finalizationId,
+              readyExportUri,
+            });
+          } else {
+            readyExportUri = liveOverlay.uri;
+          }
         }
 
         let offsetMs = 0;
@@ -460,7 +497,14 @@ export function RoundProvider({ children }: PropsWithChildren) {
           hasSeparateAudio: !!audioUri,
           segmentCount: segments.length,
         });
-        const video = await storeRoundVideo(videoUri, audioUri, deckId, events, finalizationId);
+        const video = await storeRoundVideo(
+          videoUri,
+          audioUri,
+          deckId,
+          events,
+          finalizationId,
+          readyExportUri,
+        );
         setCurrentVideo(video);
         setIsVideoFinalizing(false);
         logVideoDiagnostic('round video published to results screen', {
@@ -469,21 +513,29 @@ export function RoundProvider({ children }: PropsWithChildren) {
           totalElapsedMs: Date.now() - finalizationStartedAt,
           videoId: video.id,
         });
-        logVideoDiagnostic('round video background overlay export dispatched', {
-          finalizationId,
-          videoId: video.id,
-        });
-        void prepareRoundVideoExport(video).then((preparedVideo) => {
-          logVideoDiagnostic('round video background overlay export returned to context', {
-            exportStatus: preparedVideo.exportStatus,
+        if (video.exportStatus === 'ready') {
+          logVideoDiagnostic('round video ready immediately from live overlay capture', {
             finalizationId,
             totalElapsedMs: Date.now() - finalizationStartedAt,
-            videoId: preparedVideo.id,
+            videoId: video.id,
           });
-          setCurrentVideo((activeVideo) =>
-            activeVideo?.id === preparedVideo.id ? preparedVideo : activeVideo,
-          );
-        });
+        } else {
+          logVideoDiagnostic('round video background overlay export dispatched', {
+            finalizationId,
+            videoId: video.id,
+          });
+          void prepareRoundVideoExport(video).then((preparedVideo) => {
+            logVideoDiagnostic('round video background overlay export returned to context', {
+              exportStatus: preparedVideo.exportStatus,
+              finalizationId,
+              totalElapsedMs: Date.now() - finalizationStartedAt,
+              videoId: preparedVideo.id,
+            });
+            setCurrentVideo((activeVideo) =>
+              activeVideo?.id === preparedVideo.id ? preparedVideo : activeVideo,
+            );
+          });
+        }
         return video;
       } catch (error) {
         warnVideoDiagnostic('round video storage failed', error, {

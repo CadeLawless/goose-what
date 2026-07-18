@@ -124,6 +124,7 @@ export async function storeRoundVideo(
   deckId: string,
   events: RoundVideoEvent[] = [],
   diagnosticId?: string,
+  temporaryReadyExportUri?: string,
 ) {
   const persistenceStartedAt = Date.now();
   if (Platform.OS === 'web') throw new Error('Round recording is only available on a device.');
@@ -139,6 +140,7 @@ export async function storeRoundVideo(
   const id = `${createdAt}-${Math.random().toString(36).slice(2, 8)}`;
   const destination = new File(videoDirectory, `${id}.${readExtension(temporaryUri)}`);
   const sourceVideo = new File(temporaryUri);
+  const readyExportIsSourceVideo = temporaryReadyExportUri === temporaryUri;
   const sourceVideoSize = sourceVideo.size;
   const videoMoveStartedAt = Date.now();
   await sourceVideo.move(destination);
@@ -168,11 +170,34 @@ export async function storeRoundVideo(
     audioUri = audioDestination.uri;
   }
 
+  let exportUri: string | undefined;
+  if (readyExportIsSourceVideo) {
+    // A stitched live-overlay recording already contains both video and audio,
+    // so the persisted source is also the immediately downloadable file.
+    exportUri = destination.uri;
+  } else if (temporaryReadyExportUri) {
+    const exportDestination = new File(videoDirectory, `${id}-export.mp4`);
+    const sourceExport = new File(temporaryReadyExportUri);
+    const sourceExportSize = sourceExport.size;
+    const exportMoveStartedAt = Date.now();
+    await sourceExport.move(exportDestination);
+    exportUri = exportDestination.uri;
+    logVideoDiagnostic('live overlay export moved to persistent storage', {
+      diagnosticId,
+      elapsedMs: Date.now() - exportMoveStartedAt,
+      sourceSize: sourceExportSize,
+      destinationSize: exportDestination.size,
+    });
+  }
+
   logVideoDiagnostic('round files persisted', {
     audioDestinationExists: audioUri ? new File(audioUri).exists : false,
     audioDestinationSize: audioUri ? new File(audioUri).size : 0,
     audioUri,
     diagnosticId,
+    exportDestinationExists: exportUri ? new File(exportUri).exists : false,
+    exportDestinationSize: exportUri ? new File(exportUri).size : 0,
+    exportUri,
     sourceAudioExistsAfterMove: temporaryAudioUri ? new File(temporaryAudioUri).exists : false,
     sourceAudioUri: temporaryAudioUri,
     videoDestinationExists: destination.exists,
@@ -186,7 +211,9 @@ export async function storeRoundVideo(
     id,
     uri: destination.uri,
     audioUri,
-    exportStatus: events.length ? 'preparing' : 'ready',
+    exportUri,
+    exportIncludesOverlays: exportUri ? true : undefined,
+    exportStatus: exportUri || !events.length ? 'ready' : 'preparing',
     deckId,
     createdAt,
     events,
