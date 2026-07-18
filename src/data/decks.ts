@@ -1,8 +1,9 @@
 import type { Deck } from '@/types/deck';
 
-export const decks: Deck[] = [
+const deckDefinitions: Deck[] = [
   {
     id: 'animal-antics',
+    order: 1,
     title: 'Animal Antics',
     description: 'Lions, tigers, and bears, oh my!',
     coverImage: require('../../assets/images/decks/animal-antics.webp'),
@@ -200,6 +201,7 @@ export const decks: Deck[] = [
   },
   {
     id: 'snack-attack',
+    order: 2,
     title: 'Snack Attack',
     description: 'Your pantry\'s greatest hits.',
     coverImage: require('../../assets/images/decks/snack-attack.webp'),
@@ -393,6 +395,7 @@ export const decks: Deck[] = [
   },
   {
     id: 'celebrity-shuffle',
+    order: 3,
     title: 'Celebrity Shuffle',
     description: 'Hollywood Legends, famous musicians, sports heroes, and internet superstars.',
     coverImage: require('../../assets/images/decks/celebrity-shuffle.webp'),
@@ -706,6 +709,7 @@ export const decks: Deck[] = [
   },
   {
     id: 'movie-mania',
+    order: 4,
     title: 'Movie Mania',
     description: 'Movie lovers, this one\'s for you.',
     coverImage: require('../../assets/images/decks/movie-mania.webp'),
@@ -1030,6 +1034,7 @@ export const decks: Deck[] = [
   },
   {
     id: 'music-mix',
+    order: 5,
     title: 'Music Mix',
     description: 'Popular songs from across the decades.',
     coverImage: require('../../assets/images/decks/name-that-tune.webp'),
@@ -1311,6 +1316,7 @@ export const decks: Deck[] = [
   },
   {
     id: 'binge-worthy',
+    order: 6,
     title: 'Binge Worthy',
     description: 'The most popular sitcoms, dramas, and reality TV shows.',
     coverImage: require('../../assets/images/decks/binge-worthy.webp'),
@@ -1535,6 +1541,7 @@ export const decks: Deck[] = [
   },
   {
     id: 'gone-viral',
+    order: 7,
     title: 'Gone Viral',
     description: 'Internet legends, memes, trends, and viral moments.',
     coverImage: require('../../assets/images/decks/internet-famous.webp'),
@@ -1689,6 +1696,7 @@ export const decks: Deck[] = [
   },
   {
     id: '90s-kids',
+    order: 8,
     title: '90s Kids',
     description: 'Warning: Core memories from the 90\'s and 2000\'s.',
     coverImage: require('../../assets/images/decks/90s-kids.webp'),
@@ -1885,6 +1893,7 @@ export const decks: Deck[] = [
   },
   {
     id: 'fictional-who-am-i',
+    order: 9,
     title: 'Fictional Who Am I?',
     description: 'Legendary fictional characters across books, screens, and games.',
     coverImage: require('../../assets/images/decks/fictional-who-am-i.webp'),
@@ -2171,6 +2180,7 @@ export const decks: Deck[] = [
   },
   {
     id: 'road-trip',
+    order: 10,
     title: 'Road Trip',
     description: 'Everything to do with an American road trip.',
     coverImage: require('../../assets/images/decks/road-trip.webp'),
@@ -2369,6 +2379,7 @@ export const decks: Deck[] = [
   },
   {
     id: 'fast-food',
+    order: 11,
     title: 'Fast Food',
     description: 'America\'s favorite fast food places.',
     coverImage: require('../../assets/images/decks/fast-food.webp'),
@@ -2484,6 +2495,7 @@ export const decks: Deck[] = [
   },
   {
     id: 'sports-icons',
+    order: 12,
     title: 'Sports Icons',
     description: 'The greatest athletes of all time.',
     coverImage: require('../../assets/images/decks/sports-icons.webp'),
@@ -2692,6 +2704,7 @@ export const decks: Deck[] = [
   },
   {
     id: 'act-it-out',
+    order: 13,
     title: 'Act It Out',
     description: 'No words allowed, bring your best performance!',
     coverImage: require('../../assets/images/decks/act-it-out.webp'),
@@ -2865,6 +2878,7 @@ export const decks: Deck[] = [
   },
   {
     id: 'history-buff',
+    order: 14,
     title: 'History Buff',
     description: 'Legendary people, places, and moments that shaped history.',
     coverImage: require('../../assets/images/decks/history-buff.webp'),
@@ -3074,6 +3088,7 @@ export const decks: Deck[] = [
   },
   {
     id: 'kidding-around',
+    order: 15,
     title: 'Kidding Around',
     description: 'Kid-sized fun with animals, toys, treats, and more.',
     coverImage: require('../../assets/images/decks/kidding-around.webp'),
@@ -3282,6 +3297,8 @@ export const decks: Deck[] = [
     ]
   }
 ];
+
+export const decks = [...deckDefinitions].sort((left, right) => left.order - right.order);
 
 export function getDeckById(deckId: string | undefined) {
   return decks.find((deck) => deck.id === deckId);

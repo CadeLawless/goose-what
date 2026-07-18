@@ -6,6 +6,7 @@ export type Card = {
 
 export type Deck = {
   id: string;
+  order: number;
   title: string;
   description: string;
   coverImage?: number;
