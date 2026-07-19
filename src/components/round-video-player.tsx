@@ -100,6 +100,7 @@ export function RoundVideoPlayer({
   const scrubCompletionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingScrubCompletionRef = useRef<PendingScrubCompletion | null>(null);
   const scrubSessionRef = useRef(0);
+  const lastPlayerStatusRef = useRef('created');
   const [currentTime, setCurrentTime] = useState(0);
   const separateAudioUri = video.audioUri;
   const separateAudio = useAudioPlayer(separateAudioUri ?? null);
@@ -121,7 +122,7 @@ export function RoundVideoPlayer({
     return () => {
       logVideoDiagnostic('player unmounted', {
         expanded: expandedRef.current,
-        playerStatus: player.status,
+        playerStatus: lastPlayerStatusRef.current,
         videoId: video.id,
       });
       flushRoundDiagnostics();
@@ -136,6 +137,7 @@ export function RoundVideoPlayer({
   ]);
 
   useEventListener(player, 'statusChange', ({ error, oldStatus, status }) => {
+    lastPlayerStatusRef.current = status;
     const details = {
       errorMessage: error?.message,
       expanded: expandedRef.current,
