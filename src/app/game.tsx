@@ -182,6 +182,11 @@ export default function GameScreen() {
         endScreenHoldMs: ROUND_END_SCREEN_MS,
       });
       const prepareTransition = (async () => {
+        // Let the native view commit the finished round before capturing it.
+        // Without this, an early finish can snapshot the confirmation prompt
+        // from the preceding frame and pin it over the Time's Up screen.
+        await waitForNextPaint();
+        if (!active) return;
         const screenshotStartedAt = Date.now();
         try {
           const uri = await withTimeout(
@@ -458,6 +463,12 @@ function getCardFontSize(text: string, width: number, height: number) {
 
 function getBylineFontSize(width: number, height: number) {
   return Math.round(Math.max(18, Math.min(28, height * 0.075, width * 0.04)));
+}
+
+function waitForNextPaint() {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
