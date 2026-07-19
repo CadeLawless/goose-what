@@ -41,6 +41,7 @@ export default function ResultsScreen() {
   const passedCount = round.results.filter((result) => result.outcome === 'passed').length;
   const videoReady = currentVideo ? isRoundVideoReadyToSave(currentVideo) : false;
   const videoExportFailed = currentVideo?.exportStatus === 'failed';
+  const videoPlaybackBlocked = !!currentVideo && !videoReady && !videoExportFailed;
 
   useEffect(() => {
     logVideoDiagnostic('results screen video state changed', {
@@ -49,6 +50,7 @@ export default function ResultsScreen() {
       hasAudioUri: !!currentVideo?.audioUri,
       hasExportUri: !!currentVideo?.exportUri,
       isVideoFinalizing,
+      videoPlaybackBlocked,
       videoReady,
     });
   }, [
@@ -57,6 +59,7 @@ export default function ResultsScreen() {
     currentVideo?.exportUri,
     currentVideo?.id,
     isVideoFinalizing,
+    videoPlaybackBlocked,
     videoReady,
   ]);
 
@@ -166,7 +169,7 @@ export default function ResultsScreen() {
             <Text style={styles.deckName}>{deck.title}</Text>
             {(isVideoFinalizing || currentVideo) && (
               <View style={styles.videoSection}>
-                {currentVideo ? (
+                {currentVideo && !videoPlaybackBlocked ? (
                   <>
                     <RoundVideoPlayer
                       isSaving={isSavingVideo}
@@ -174,6 +177,7 @@ export default function ResultsScreen() {
                       saveDisabled={!videoReady}
                       onDelete={() => deleteCurrentVideo()}
                       onSave={handleSaveVideo}
+                      staticThumbnail
                       video={currentVideo}
                       style={styles.video}
                     />
@@ -202,14 +206,14 @@ export default function ResultsScreen() {
                   </>
                 ) : (
                   <View
-                    accessibilityLabel="Preparing your round video"
+                    accessibilityLabel="Preparing your round video for playback"
                     accessibilityRole="progressbar"
                     style={styles.videoPlaceholder}
                   >
                     <ActivityIndicator color={colors.play} size="large" />
                     <Text style={styles.videoPlaceholderTitle}>Preparing your video…</Text>
                     <Text style={styles.videoPlaceholderBody}>
-                      Your results are ready. The video will appear here automatically.
+                      Your results are ready. Playback will appear as soon as processing finishes.
                     </Text>
                   </View>
                 )}
