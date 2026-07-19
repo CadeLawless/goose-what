@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import * as Linking from 'expo-linking';
 import { useFocusEffect } from 'expo-router';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -45,6 +46,10 @@ import {
   type RoundVideo,
 } from '@/video/round-videos';
 
+const PRIVACY_POLICY_URL = 'https://playwhatzit.com/#privacy';
+const SUPPORT_EMAIL = 'support@playwhatzit.com';
+const SUPPORT_EMAIL_URL = `mailto:${SUPPORT_EMAIL}?subject=WHATZ%20IT%20Support`;
+
 export default function DeckLibraryScreen() {
   const { width } = useWindowDimensions();
   const scrollViewRef = useRef<ScrollView>(null);
@@ -64,6 +69,10 @@ export default function DeckLibraryScreen() {
   const [isDeletingVideo, setIsDeletingVideo] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState<{
+    title: string;
+    message: string;
+  } | null>(null);
+  const [externalLinkError, setExternalLinkError] = useState<{
     title: string;
     message: string;
   } | null>(null);
@@ -237,6 +246,15 @@ export default function DeckLibraryScreen() {
       setIsDeletingVideo(false);
     }
   };
+
+  const openExternalLink = useCallback((url: string, errorMessage: string) => {
+    void Linking.openURL(url).catch(() => {
+      setExternalLinkError({
+        title: 'Could not open link',
+        message: errorMessage,
+      });
+    });
+  }, []);
 
   if (!isPortrait) return <PortraitTransition style={styles.orientationGate} />;
 
@@ -436,6 +454,52 @@ export default function DeckLibraryScreen() {
               </View>
             </CollapsibleContent>
           </View>
+
+          <View style={styles.privacySupportCard}>
+            <Text style={styles.privacySupportTitle}>PRIVACY &amp; SUPPORT</Text>
+            <Text style={styles.privacySupportBody}>
+              Learn how WHATZ IT? handles your data or get help from our team.
+            </Text>
+            <View style={styles.privacySupportLinks}>
+              <Pressable
+                accessibilityHint="Opens the WHATZ IT privacy policy in your browser"
+                accessibilityRole="link"
+                onPress={() =>
+                  openExternalLink(
+                    PRIVACY_POLICY_URL,
+                    `Visit ${PRIVACY_POLICY_URL} in your browser.`,
+                  )
+                }
+                style={({ pressed }) => [
+                  styles.privacySupportLink,
+                  pressed && styles.privacySupportLinkPressed,
+                ]}
+              >
+                <Text style={styles.privacySupportLinkText}>PRIVACY POLICY</Text>
+              </Pressable>
+              <View accessibilityElementsHidden style={styles.privacySupportDivider} />
+              <Pressable
+                accessibilityHint="Opens your email app to contact WHATZ IT support"
+                accessibilityLabel={`Email WHATZ IT support at ${SUPPORT_EMAIL}`}
+                accessibilityRole="link"
+                onPress={() =>
+                  openExternalLink(
+                    SUPPORT_EMAIL_URL,
+                    `Email us directly at ${SUPPORT_EMAIL}.`,
+                  )
+                }
+                style={({ pressed }) => [
+                  styles.privacySupportLink,
+                  pressed && styles.privacySupportLinkPressed,
+                ]}
+              >
+                <Text style={styles.privacySupportLinkText}>CONTACT SUPPORT</Text>
+                <Text selectable style={styles.privacySupportEmail}>
+                  {SUPPORT_EMAIL}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
         </View>
       </ScrollView>
       <ConfirmationPrompt
@@ -461,6 +525,15 @@ export default function DeckLibraryScreen() {
         onConfirm={() => setSaveNotice(null)}
         title={saveNotice?.title ?? ''}
         visible={saveNotice !== null}
+      />
+      <ConfirmationPrompt
+        cancelLabel={null}
+        confirmLabel="OK"
+        message={externalLinkError?.message ?? ''}
+        onCancel={() => setExternalLinkError(null)}
+        onConfirm={() => setExternalLinkError(null)}
+        title={externalLinkError?.title ?? ''}
+        visible={externalLinkError !== null}
       />
     </SafeAreaView>
   );
@@ -657,6 +730,46 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
   },
   deleteButtonText: { color: '#64748B', fontSize: 9, fontWeight: '900', letterSpacing: 0.7 },
+  privacySupportCard: {
+    gap: 14,
+    marginTop: 42,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+  },
+  privacySupportTitle: {
+    color: '#459EFE',
+    fontSize: 16,
+    lineHeight: 20,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+  },
+  privacySupportBody: { color: '#64748B', fontSize: 14, lineHeight: 20 },
+  privacySupportLinks: {
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 16,
+  },
+  privacySupportLink: {
+    minHeight: 54,
+    justifyContent: 'center',
+    gap: 2,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  privacySupportLinkPressed: { backgroundColor: '#EFF6FF' },
+  privacySupportLinkText: {
+    color: '#2563EB',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '900',
+    letterSpacing: 0.35,
+  },
+  privacySupportEmail: { color: '#64748B', fontSize: 12, lineHeight: 17 },
+  privacySupportDivider: { height: StyleSheet.hairlineWidth, backgroundColor: '#E2E8F0' },
   pressed: { opacity: 0.72, transform: [{ scale: 0.98 }] },
   disabled: { opacity: 0.55 },
 });
