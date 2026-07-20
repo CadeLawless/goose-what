@@ -277,7 +277,6 @@ export default function GameScreen() {
 
   if (!deck || !currentCard) return null;
 
-  const locked = round.status !== 'playing';
   const feedbackColor = round.latestOutcome === 'correct' ? colors.correct : colors.pass;
   const outerColor =
     round.status === 'feedback'
@@ -302,7 +301,8 @@ export default function GameScreen() {
   const cardFontSize = getCardFontSize(currentCard.text, width, height);
   const bylineFontSize = getBylineFontSize(width, height);
   const showManualControls =
-    Platform.OS === 'web' || tiltStatus === 'denied' || tiltStatus === 'unavailable';
+    round.status === 'playing' &&
+    (Platform.OS === 'web' || tiltStatus === 'denied' || tiltStatus === 'unavailable');
   const manualControlHeight = Math.round(Math.max(52, Math.min(70, height * 0.16)));
   const manualControlMaxWidth = Math.round(Math.min(720, width * 0.82));
   const manualControlFontSize = Math.round(Math.max(12, Math.min(16, height * 0.034)));
@@ -374,14 +374,11 @@ export default function GameScreen() {
                   <Pressable
                     accessibilityLabel="Pass"
                     accessibilityRole="button"
-                    accessibilityState={{ disabled: locked }}
-                    disabled={locked}
                     onPress={() => handleAnswer('passed')}
                     style={({ pressed }) => [
                       styles.control,
                       styles.passButton,
                       { minHeight: manualControlHeight },
-                      locked && styles.controlDisabled,
                       pressed && styles.controlPressed,
                     ]}
                   >
@@ -395,14 +392,11 @@ export default function GameScreen() {
                   <Pressable
                     accessibilityLabel="Correct"
                     accessibilityRole="button"
-                    accessibilityState={{ disabled: locked }}
-                    disabled={locked}
                     onPress={() => handleAnswer('correct')}
                     style={({ pressed }) => [
                       styles.control,
                       styles.correctButton,
                       { minHeight: manualControlHeight },
-                      locked && styles.controlDisabled,
                       pressed && styles.controlPressed,
                     ]}
                   >
@@ -651,7 +645,6 @@ const styles = StyleSheet.create({
   },
   passButton: { backgroundColor: colors.pass, borderColor: colors.passBorder },
   correctButton: { backgroundColor: colors.correct, borderColor: colors.correctBorder },
-  controlDisabled: { opacity: 0.55 },
   controlPressed: { transform: [{ scale: 0.98 }], opacity: 0.86 },
   controlIcon: { color: '#000000', fontSize: 26, fontWeight: '900', lineHeight: 28 },
   controlText: { color: '#000000', fontWeight: '900', letterSpacing: 1.1 },
