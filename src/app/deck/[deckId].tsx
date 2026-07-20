@@ -244,20 +244,6 @@ export default function DeckDetailsScreen() {
               <View style={styles.roundSetupCard}>
                 <View style={styles.roundSetupHeader}>
                   <Text style={styles.roundSetupTitle}>{roundSetupNotice.title}</Text>
-
-                  {roundSetupNotice.showSettings && (
-                    <Pressable
-                      accessibilityHint="Opens the system settings for WHATZ IT?"
-                      accessibilityRole="link"
-                      onPress={() => void Linking.openSettings().catch(() => undefined)}
-                      style={({ pressed }) => [
-                        styles.settingsLink,
-                        pressed && styles.settingsLinkPressed,
-                      ]}
-                    >
-                      <Text style={styles.settingsLinkText}>OPEN SETTINGS</Text>
-                    </Pressable>
-                  )}
                 </View>
 
                 <View style={styles.roundSetupMessages}>
@@ -268,6 +254,19 @@ export default function DeckDetailsScreen() {
                     </View>
                   ))}
                 </View>
+                {roundSetupNotice.showSettings && (
+                  <Pressable
+                    accessibilityHint="Opens the system settings for WHATZ IT?"
+                    accessibilityRole="link"
+                    onPress={() => void Linking.openSettings().catch(() => undefined)}
+                    style={({ pressed }) => [
+                      styles.settingsLink,
+                      pressed && styles.settingsLinkPressed,
+                    ]}
+                  >
+                    <Text style={styles.settingsLinkText}>OPEN SETTINGS</Text>
+                  </Pressable>
+                )}
               </View>
             )}
 
@@ -681,10 +680,11 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: radius.lg,
     backgroundColor: colors.background,
+    marginTop: spacing.md,
   },
 
   roundSetupHeader: {
-    minHeight: 36,
+    minHeight: 30,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -694,7 +694,7 @@ const styles = StyleSheet.create({
   roundSetupTitle: {
     flex: 1,
     color: colors.play,
-    fontSize: 12,
+    fontSize: 14,
     lineHeight: 16,
     fontWeight: '900',
     letterSpacing: 0.8,
@@ -729,8 +729,9 @@ const styles = StyleSheet.create({
   settingsLink: {
     minHeight: 36,
     justifyContent: 'center',
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: spacing.md,
     borderRadius: radius.pill,
+    backgroundColor: colors.play,
   },
 
   settingsLinkPressed: {
@@ -738,11 +739,12 @@ const styles = StyleSheet.create({
   },
 
   settingsLinkText: {
-    color: colors.play,
+    color: colors.white,
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '900',
     letterSpacing: 0.7,
+    textAlign: 'center',
   },
 
   startButton: {
