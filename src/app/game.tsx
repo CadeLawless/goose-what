@@ -452,7 +452,7 @@ export default function GameScreen() {
           {round.status !== 'finished' && round.status !== 'feedback' && (
             <View pointerEvents="box-none" style={styles.closeButton}>
               <CloseButton
-                accessibilityLabel="Finish round early"
+                accessibilityLabel="End round early"
                 disabled={false}
                 onPress={handleFinishEarly}
               />
@@ -462,7 +462,7 @@ export default function GameScreen() {
           {finishPromptVisible && round.status !== 'finished' && (
             <View accessibilityViewIsModal style={styles.promptOverlay}>
               <View style={styles.promptCard}>
-                <Text style={styles.promptTitle}>Finish round early?</Text>
+                <Text style={styles.promptTitle}>End round early?</Text>
                 <Text style={styles.promptBody}>
                   Your answers so far will still appear in the results.
                 </Text>
@@ -479,7 +479,7 @@ export default function GameScreen() {
                     onPress={confirmFinishEarly}
                     style={({ pressed }) => [styles.promptFinish, pressed && styles.promptPressed]}
                   >
-                    <Text style={styles.promptFinishText}>FINISH ROUND</Text>
+                    <Text style={styles.promptFinishText}>END ROUND</Text>
                   </Pressable>
                 </View>
               </View>
