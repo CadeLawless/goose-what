@@ -1,4 +1,4 @@
-import { type Href, Stack, usePathname, useRouter } from 'expo-router';
+import { Stack, usePathname, useRouter } from 'expo-router';
 import { setAudioModeAsync } from 'expo-audio';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
@@ -28,9 +28,12 @@ void SplashScreen.preventAutoHideAsync();
 export default function RootLayout() {
   const [isReady, setIsReady] = useState(false);
   const [rootHasLaidOut, setRootHasLaidOut] = useState(false);
-  const [settingsReturnPath, setSettingsReturnPath] =
+  const [settingsReturnDeckId, setSettingsReturnDeckId] =
     useState<string | null | undefined>(undefined);
   const settingsReturnHandled = useRef(false);
+  const settingsReturnPath = settingsReturnDeckId
+    ? `/deck/${encodeURIComponent(settingsReturnDeckId)}`
+    : settingsReturnDeckId;
   const pathname = usePathname();
   const router = useRouter();
 
@@ -58,11 +61,7 @@ export default function RootLayout() {
       loadHomeBranding().catch(() => undefined),
       consumeSettingsReturnDeckId().catch(() => null),
     ]).then(([, deckId]) => {
-      setSettingsReturnPath(
-        deckId && getDeckById(deckId)
-          ? `/deck/${encodeURIComponent(deckId)}`
-          : null,
-      );
+      setSettingsReturnDeckId(deckId && getDeckById(deckId) ? deckId : null);
       setIsReady(true);
     });
   }, []);
@@ -76,10 +75,26 @@ export default function RootLayout() {
       return;
     }
     settingsReturnHandled.current = true;
-    if (settingsReturnPath && pathname !== settingsReturnPath) {
-      router.replace(settingsReturnPath as Href);
+    if (
+      settingsReturnDeckId &&
+      settingsReturnPath &&
+      pathname !== settingsReturnPath
+    ) {
+      router.push({
+        pathname: '/deck/[deckId]',
+        params: {
+          deckId: settingsReturnDeckId,
+          transition: 'apple-slide',
+        },
+      });
     }
-  }, [isReady, pathname, router, settingsReturnPath]);
+  }, [
+    isReady,
+    pathname,
+    router,
+    settingsReturnDeckId,
+    settingsReturnPath,
+  ]);
 
   useEffect(() => {
     logRoundDiagnostic('root audio mode configuration started');

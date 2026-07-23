@@ -377,7 +377,11 @@ export default function ReadyScreen() {
       // If capture is unavailable, navigation still completes normally.
     }
     resetRound();
-    router.replace(`/deck/${deck.id}` as Href);
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace(`/deck/${deck.id}` as Href);
+    }
   };
 
   return (
