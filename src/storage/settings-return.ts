@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
 
 const SETTINGS_RETURN_DECK_KEY = 'settings-return-deck-id';
 
@@ -11,20 +12,24 @@ export type SettingsPermissionSnapshot = {
 export type SettingsReturnRequest = {
   deckId: string;
   permissions?: SettingsPermissionSnapshot;
+  sessionId: string | null;
   source: 'background' | 'explicit';
 };
 
 type StoredSettingsReturnRequest = SettingsReturnRequest & {
-  version: 1;
+  version: 2;
 };
 
 export async function saveSettingsReturnDeckId(
   deckId: string,
-  request: Omit<SettingsReturnRequest, 'deckId'> = { source: 'explicit' },
+  request: Omit<SettingsReturnRequest, 'deckId' | 'sessionId'> = {
+    source: 'explicit',
+  },
 ) {
   const stored: StoredSettingsReturnRequest = {
-    version: 1,
+    version: 2,
     deckId,
+    sessionId: Constants.sessionId,
     ...request,
   };
   await AsyncStorage.setItem(SETTINGS_RETURN_DECK_KEY, JSON.stringify(stored));
@@ -62,12 +67,14 @@ function parseSettingsReturnRequest(stored: string): SettingsReturnRequest {
   try {
     const parsed = JSON.parse(stored) as Partial<StoredSettingsReturnRequest>;
     if (
-      parsed.version === 1 &&
+      parsed.version === 2 &&
       typeof parsed.deckId === 'string' &&
+      typeof parsed.sessionId === 'string' &&
       (parsed.source === 'background' || parsed.source === 'explicit')
     ) {
       return {
         deckId: parsed.deckId,
+        sessionId: parsed.sessionId,
         source: parsed.source,
         permissions: isPermissionSnapshot(parsed.permissions)
           ? parsed.permissions
@@ -78,7 +85,7 @@ function parseSettingsReturnRequest(stored: string): SettingsReturnRequest {
     // Values written by older builds were plain deck IDs.
   }
 
-  return { deckId: stored, source: 'explicit' };
+  return { deckId: stored, sessionId: null, source: 'explicit' };
 }
 
 function isPermissionSnapshot(
