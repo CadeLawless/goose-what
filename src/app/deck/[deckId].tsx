@@ -55,10 +55,7 @@ type RoundSetupNotice = {
 
 export default function DeckDetailsScreen() {
   const { width } = useWindowDimensions();
-  const { deckId, transition } = useLocalSearchParams<{
-    deckId: string;
-    transition?: string;
-  }>();
+  const { deckId } = useLocalSearchParams<{ deckId: string }>();
   const deck = getDeckById(deckId);
   const router = useRouter();
   const { configureRound } = useRound();
@@ -116,14 +113,6 @@ export default function DeckDetailsScreen() {
   useEffect(() => {
     loadRoundDuration().then(setDuration);
   }, []);
-
-  useEffect(() => {
-    if (transition !== 'settings-restore') return;
-    const frame = requestAnimationFrame(() => {
-      router.setParams({ transition: 'apple-slide' });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [router, transition]);
 
   useEffect(() => {
     let active = true;

@@ -156,6 +156,16 @@ export default function RootLayout() {
         />
         <Stack.Screen
           name="deck/[deckId]"
+          listeners={({ navigation, route }) => ({
+            transitionEnd: (event) => {
+              const transition = (
+                route.params as { transition?: string } | undefined
+              )?.transition;
+              if (!event.data.closing && transition === 'settings-restore') {
+                navigation.setParams({ transition: 'apple-slide' });
+              }
+            },
+          })}
           options={({ route }) => ({
             animation:
               (route.params as { transition?: string } | undefined)?.transition === 'apple-slide'
