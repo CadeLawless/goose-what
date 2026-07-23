@@ -1,11 +1,5 @@
 import { useEffect } from 'react';
-import {
-  type StyleProp,
-  StyleSheet,
-  Text,
-  View,
-  type ViewStyle,
-} from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import Animated, {
   cancelAnimation,
   useAnimatedStyle,
@@ -16,10 +10,12 @@ import Animated, {
 } from 'react-native-reanimated';
 
 type RecordingIndicatorProps = {
-  style?: StyleProp<ViewStyle>;
+  position?: 'bottom-left' | 'top-left';
 };
 
-export function RecordingIndicator({ style }: RecordingIndicatorProps) {
+export function RecordingIndicator({
+  position = 'bottom-left',
+}: RecordingIndicatorProps) {
   const reduceMotion = useReducedMotion();
   const dotOpacity = useSharedValue(1);
 
@@ -43,7 +39,10 @@ export function RecordingIndicator({ style }: RecordingIndicatorProps) {
       accessibilityRole="text"
       accessible
       pointerEvents="none"
-      style={[styles.container, style]}
+      style={[
+        styles.container,
+        position === 'top-left' && styles.topLeft,
+      ]}
     >
       <Animated.View accessibilityElementsHidden style={[styles.dot, animatedDotStyle]} />
       <Text accessible={false} style={styles.label}>
@@ -67,6 +66,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 999,
     backgroundColor: 'rgba(0,0,0,0.72)',
+  },
+  topLeft: {
+    top: 37,
+    bottom: 'auto',
+    left: 90,
   },
   dot: {
     width: 10,

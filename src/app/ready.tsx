@@ -67,6 +67,8 @@ export default function ReadyScreen() {
     foreheadStatus === 'ready' ||
     foreheadStatus === 'denied' ||
     foreheadStatus === 'unavailable';
+  const motionControlsUnavailable =
+    foreheadStatus === 'denied' || foreheadStatus === 'unavailable';
   const recordingPrepared =
     recordingPreparation === 'ready' ||
     recordingPreparation === 'permission-denied' ||
@@ -449,7 +451,11 @@ export default function ReadyScreen() {
               )}
             </View>
           </View>
-          {isRecording && <RecordingIndicator />}
+          {isRecording && (
+            <RecordingIndicator
+              position={motionControlsUnavailable ? 'top-left' : 'bottom-left'}
+            />
+          )}
         </SafeAreaView>
       </LandscapeViewport>
     </View>

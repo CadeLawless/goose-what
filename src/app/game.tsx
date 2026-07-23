@@ -300,9 +300,10 @@ export default function GameScreen() {
         : '#439EFE';
   const cardFontSize = getCardFontSize(currentCard.text, width, height);
   const bylineFontSize = getBylineFontSize(width, height);
+  const motionControlsUnavailable =
+    Platform.OS === 'web' || tiltStatus === 'denied' || tiltStatus === 'unavailable';
   const showManualControls =
-    round.status === 'playing' &&
-    (Platform.OS === 'web' || tiltStatus === 'denied' || tiltStatus === 'unavailable');
+    round.status === 'playing' && motionControlsUnavailable;
   const manualControlHeight = Math.round(Math.max(52, Math.min(70, height * 0.16)));
   const manualControlMaxWidth = Math.round(Math.min(720, width * 0.82));
   const manualControlFontSize = Math.round(Math.max(12, Math.min(16, height * 0.034)));
@@ -444,11 +445,7 @@ export default function GameScreen() {
 
           {isRecording && (
             <RecordingIndicator
-              style={
-                showManualControls
-                  ? styles.recordingIndicatorWithManualControls
-                  : undefined
-              }
+              position={motionControlsUnavailable ? 'top-left' : 'bottom-left'}
             />
           )}
 
@@ -535,11 +532,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   closeButton: { position: 'absolute', top: 30, left: 30, zIndex: 70 },
-  recordingIndicatorWithManualControls: {
-    top: 37,
-    bottom: 'auto',
-    left: 90,
-  },
   topRow: {
     height: 72,
     flexShrink: 0,
