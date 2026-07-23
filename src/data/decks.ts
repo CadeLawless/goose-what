@@ -16,8 +16,8 @@ const deckCatalog: PortableCatalog =
 /* DECK_MANAGER_CATALOG_START */
 {
   "schemaVersion": 1,
-  "revision": 2,
-  "updatedAt": "2026-07-23T21:16:27Z",
+  "revision": 3,
+  "updatedAt": "2026-07-23T21:18:53Z",
   "decks": [
     {
       "id": "celebrity-shuffle",
