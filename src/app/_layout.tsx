@@ -1,6 +1,5 @@
 import { Stack, usePathname, useRouter } from 'expo-router';
 import { setAudioModeAsync } from 'expo-audio';
-import Constants from 'expo-constants';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -211,7 +210,6 @@ async function getSettingsReturnDeckId() {
   const request = await consumeSettingsReturnRequest();
   if (!request) return null;
   if (request.source === 'explicit') return request.deckId;
-  if (request.sessionId !== Constants.sessionId) return null;
   if (!request.permissions) return null;
 
   const currentPermissions = await getSettingsPermissionSnapshot();
