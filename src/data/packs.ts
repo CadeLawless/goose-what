@@ -20,8 +20,8 @@ const packCatalog: PortableCatalog =
 /* DECK_MANAGER_CATALOG_START */
 {
   "schemaVersion": 2,
-  "revision": 5,
-  "updatedAt": "2026-07-23T22:12:44Z",
+  "revision": 8,
+  "updatedAt": "2026-07-23T22:42:51Z",
   "packs": [
     {
       "id": "free-pack",
@@ -3354,6 +3354,37 @@ const packCatalog: PortableCatalog =
           ]
         }
       ]
+    },
+    {
+      "id": "sports-pack",
+      "order": 2,
+      "title": "Sports Pack",
+      "access": "paid",
+      "price": 7.99,
+      "decks": [
+        {
+          "id": "baseball-legends",
+          "order": 1,
+          "title": "Baseball Legends",
+          "description": "yo yo yo",
+          "coverImage": "assets/images/decks/ALBERT-BACK.png",
+          "version": 1,
+          "tags": [],
+          "access": "paid",
+          "price": 0.99,
+          "cards": [
+          ]
+        }
+      ]
+    },
+    {
+      "id": "hollywood",
+      "order": 3,
+      "title": "Hollywood",
+      "access": "paid",
+      "price": 9.99,
+      "decks": [
+      ]
     }
   ]
 }
@@ -3363,6 +3394,7 @@ const deckCoverImages: Record<string, number> =
 /* DECK_MANAGER_COVERS_START */
 {
   "assets/images/decks/90s-kids.webp": require("../../assets/images/decks/90s-kids.webp"),
+  "assets/images/decks/ALBERT-BACK.png": require("../../assets/images/decks/ALBERT-BACK.png"),
   "assets/images/decks/act-it-out.webp": require("../../assets/images/decks/act-it-out.webp"),
   "assets/images/decks/animal-antics.webp": require("../../assets/images/decks/animal-antics.webp"),
   "assets/images/decks/binge-worthy.webp": require("../../assets/images/decks/binge-worthy.webp"),
