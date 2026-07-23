@@ -291,7 +291,7 @@ export default function DeckDetailsScreen() {
                       pressed && styles.settingsLinkPressed,
                     ]}
                   >
-                    <Text style={styles.settingsLinkText}>OPEN SETTINGS</Text>
+                    <Text style={styles.settingsLinkText}>CHANGE SETTINGS</Text>
                   </Pressable>
                 )}
               </View>
@@ -341,7 +341,7 @@ function getRoundSetupNotice({
   if (motionOff) {
     messages.push(
       motionStatus === 'denied'
-        ? 'Motion access is off. Pass and Correct buttons will appear during the round.'
+        ? 'Pass and Correct buttons will appear during the round.'
         : 'Motion controls are unavailable. Pass and Correct buttons will appear during the round.',
     );
   }
@@ -355,7 +355,7 @@ function getRoundSetupNotice({
     if (!hasUndeterminedPermission) return null;
     return {
       messages: [
-        'Motion controls and round videos are optional. You can still play if you decline.',
+        'Motion controls and video recordings are optional. You can still play if you decline.',
       ],
       showSettings: false,
       title: 'OPTIONAL FEATURES',
@@ -366,7 +366,7 @@ function getRoundSetupNotice({
     messages.length > 1
       ? 'ROUND SETUP'
       : motionOff
-        ? 'MANUAL CONTROLS ON'
+        ? 'MOTION ACCESS OFF'
         : cameraOff
           ? 'VIDEO RECORDING OFF'
           : 'VIDEO SOUND OFF';
